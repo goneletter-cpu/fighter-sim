@@ -1,7 +1,9 @@
 #include "flight_controller.h"
 #include <glm/gtc/quaternion.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/common.hpp>
+#include <cmath>
 
-// PID参数初始值（之后需要根据飞行表现调整）
 FlightController::FlightController()
     : pitch_pid(1.1f, 0.05f, 0.25f, 0.45f)
     , roll_pid (1.3f, 0.05f, 0.22f, 0.45f)
@@ -12,17 +14,37 @@ ControlInput FlightController::update(const AircraftState& state,
                                        const AttitudeCommand& cmd,
                                        float dt)
 {
-    glm::vec3 euler = state.euler_angles();
-    // GLM eulerAngles 返回顺序: pitch=x, yaw=y, roll=z
-    float pitch = euler.x;
-    float roll  = euler.z;
+    glm::mat3 world_from_body = glm::mat3_cast(state.orientation);
+    glm::vec3 forward = glm::normalize(world_from_body * glm::vec3(0, 0, -1));
+    glm::vec3 up      = glm::normalize(world_from_body * glm::vec3(0, 1, 0));
+    const glm::vec3 world_up(0.0f, 1.0f, 0.0f);
+
+    // 用机头/机体上方向计算连续银行角，避免欧拉角在翻转附近跳变
+    glm::vec3 right_ref = glm::cross(world_up, forward);
+    if (glm::length(right_ref) < 1e-4f) {
+        right_ref = glm::cross(glm::vec3(1, 0, 0), forward);
+    }
+    right_ref = glm::normalize(right_ref);
+    glm::vec3 up_ref = glm::normalize(glm::cross(forward, right_ref));
+    float roll = std::atan2(glm::dot(glm::cross(up_ref, up), forward),
+                            glm::dot(up_ref, up));
+    float pitch = std::asin(glm::clamp(forward.y, -1.0f, 1.0f));
 
     ControlInput ctrl;
     ctrl.elevator = pitch_pid.update(cmd.pitch_rad, pitch, dt);
     ctrl.aileron  = roll_pid .update(cmd.roll_rad,  roll,  dt);
-    // 偏航：控制角速率而非绝对角
     ctrl.rudder   = yaw_pid  .update(cmd.yaw_rate_rad_s, state.angular_vel.y, dt);
     ctrl.throttle = cmd.throttle;
+
+    // 防倒飞保护：机体上方向朝下时，额外施加回正副翼
+    if (up.y < 0.0f) {
+        float recover = glm::clamp(-up.y, 0.0f, 1.0f);
+        ctrl.aileron += glm::clamp(-roll * 0.55f * recover, -0.35f, 0.35f);
+    }
+
+    ctrl.elevator = glm::clamp(ctrl.elevator, -1.0f, 1.0f);
+    ctrl.aileron  = glm::clamp(ctrl.aileron,  -1.0f, 1.0f);
+    ctrl.rudder   = glm::clamp(ctrl.rudder,   -1.0f, 1.0f);
 
     return ctrl;
 }

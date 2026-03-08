@@ -229,112 +229,79 @@ void Renderer::draw_hud(const glm::vec3& euler_deg,
 
 WireMesh make_fighter_mesh() {
     WireMesh m;
+    // 简约客机风格：圆润机身 + 基本翼面，减少线条但保留体积感
+    const std::vector<float> zs = {-6.8f, -4.2f, -1.2f, 2.0f, 5.2f};
+    const std::vector<float> rx = {0.12f, 0.90f, 1.05f, 0.85f, 0.45f};
+    const std::vector<float> ry = {0.12f, 0.95f, 1.08f, 0.90f, 0.50f};
+    const int ring_pts = 8;
 
-    // F-16风格修长线框（近似比例）
-    m.vertices = {
-        // 机身中心线
-        { 0.00f,  0.00f, -7.20f}, // 0 机头
-        { 0.00f,  0.35f, -5.60f}, // 1 风挡前
-        { 0.00f,  0.62f, -4.20f}, // 2 座舱中
-        { 0.00f,  0.68f, -2.00f}, // 3 背脊前
-        { 0.00f,  0.42f,  1.60f}, // 4 背脊后
-        { 0.00f,  0.15f,  4.80f}, // 5 喷口上缘
-        { 0.00f,  0.00f,  6.00f}, // 6 尾端
+    // 机头与机尾尖点
+    m.vertices.push_back({0.0f, 0.0f, -7.5f}); // 0 nose
+    m.vertices.push_back({0.0f, 0.0f,  6.2f}); // 1 tail
 
-        // 机身两侧与进气道
-        {-0.35f,  0.05f, -6.00f}, // 7 左机鼻棱线
-        { 0.35f,  0.05f, -6.00f}, // 8 右机鼻棱线
-        {-0.95f, -0.15f, -4.40f}, // 9 左进气口前缘
-        { 0.95f, -0.15f, -4.40f}, // 10 右进气口前缘
-        {-0.85f, -0.22f, -2.80f}, // 11 左进气口后缘
-        { 0.85f, -0.22f, -2.80f}, // 12 右进气口后缘
-        {-0.75f, -0.10f, -0.60f}, // 13 左机身中段
-        { 0.75f, -0.10f, -0.60f}, // 14 右机身中段
-        {-0.58f, -0.05f,  2.50f}, // 15 左尾段
-        { 0.58f, -0.05f,  2.50f}, // 16 右尾段
-        { 0.00f, -0.48f, -4.80f}, // 17 机腹前
-        { 0.00f, -0.62f, -1.20f}, // 18 机腹中
-        { 0.00f, -0.46f,  3.80f}, // 19 机腹后
+    // 椭圆截面环
+    const int ring_start = (int)m.vertices.size();
+    for (size_t r = 0; r < zs.size(); ++r) {
+        for (int i = 0; i < ring_pts; ++i) {
+            float t = (2.0f * 3.1415926f * i) / ring_pts;
+            m.vertices.push_back({
+                rx[r] * std::cos(t),
+                ry[r] * std::sin(t),
+                zs[r]
+            });
+        }
+    }
 
-        // LERX 与主翼
-        {-1.55f,  0.02f, -3.20f}, // 20 左LERX
-        { 1.55f,  0.02f, -3.20f}, // 21 右LERX
-        {-1.05f, -0.03f, -2.20f}, // 22 左翼前缘根
-        { 1.05f, -0.03f, -2.20f}, // 23 右翼前缘根
-        {-4.45f, -0.18f,  0.60f}, // 24 左翼尖
-        { 4.45f, -0.18f,  0.60f}, // 25 右翼尖
-        {-1.55f, -0.08f,  1.20f}, // 26 左翼后缘根
-        { 1.55f, -0.08f,  1.20f}, // 27 右翼后缘根
+    auto ring_idx = [&](int r, int i) { return ring_start + r * ring_pts + (i % ring_pts); };
 
-        // 全动平尾
-        {-0.72f,  0.05f,  4.20f}, // 28 左平尾根
-        { 0.72f,  0.05f,  4.20f}, // 29 右平尾根
-        {-2.25f,  0.08f,  5.25f}, // 30 左平尾尖
-        { 2.25f,  0.08f,  5.25f}, // 31 右平尾尖
+    // 每个截面闭环
+    for (int r = 0; r < (int)zs.size(); ++r) {
+        for (int i = 0; i < ring_pts; ++i) {
+            m.line_indices.push_back(ring_idx(r, i));
+            m.line_indices.push_back(ring_idx(r, i + 1));
+        }
+    }
 
-        // 垂尾
-        { 0.00f,  0.70f,  3.20f}, // 32 垂尾前缘根
-        { 0.00f,  2.15f,  4.35f}, // 33 垂尾顶
-        { 0.00f,  0.55f,  5.55f}, // 34 垂尾后缘根
+    // 环与环之间连接，形成圆润“球体感”骨架
+    for (int r = 0; r < (int)zs.size() - 1; ++r) {
+        for (int i = 0; i < ring_pts; ++i) {
+            m.line_indices.push_back(ring_idx(r, i));
+            m.line_indices.push_back(ring_idx(r + 1, i));
+        }
+    }
 
-        // 座舱细节
-        {-0.42f,  0.38f, -4.90f}, // 35 左座舱边
-        { 0.42f,  0.38f, -4.90f}, // 36 右座舱边
-        {-0.34f,  0.52f, -3.30f}, // 37 左座舱后
-        { 0.34f,  0.52f, -3.30f}, // 38 右座舱后
+    // 机头/机尾与最近截面连接
+    for (int i = 0; i < ring_pts; ++i) {
+        m.line_indices.push_back(0);
+        m.line_indices.push_back(ring_idx(0, i));
+        m.line_indices.push_back(1);
+        m.line_indices.push_back(ring_idx((int)zs.size() - 1, i));
+    }
 
-        // 腹鳍与喷口
-        {-0.48f, -0.62f,  4.95f}, // 39 左腹鳍
-        { 0.48f, -0.62f,  4.95f}, // 40 右腹鳍
-        {-0.42f,  0.00f,  5.35f}, // 41 喷口左
-        { 0.42f,  0.00f,  5.35f}, // 42 喷口右
-        { 0.00f, -0.32f,  5.35f}, // 43 喷口下
-    };
+    // 简化机翼
+    const unsigned int wing_root_l = (unsigned int)m.vertices.size(); m.vertices.push_back({-0.9f, -0.05f, -0.6f});
+    const unsigned int wing_root_r = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.9f, -0.05f, -0.6f});
+    const unsigned int wing_tip_l  = (unsigned int)m.vertices.size(); m.vertices.push_back({-4.2f, -0.12f,  0.9f});
+    const unsigned int wing_tip_r  = (unsigned int)m.vertices.size(); m.vertices.push_back({ 4.2f, -0.12f,  0.9f});
+    const unsigned int wing_back_l = (unsigned int)m.vertices.size(); m.vertices.push_back({-1.4f, -0.08f,  1.5f});
+    const unsigned int wing_back_r = (unsigned int)m.vertices.size(); m.vertices.push_back({ 1.4f, -0.08f,  1.5f});
 
-    // 线段索引（每两个构成一条线）
-    m.line_indices = {
-        // 机身中心线
-        0,1, 1,2, 2,3, 3,4, 4,5, 5,6,
+    m.line_indices.insert(m.line_indices.end(), {
+        wing_root_l, wing_tip_l, wing_tip_l, wing_back_l, wing_back_l, wing_root_l,
+        wing_root_r, wing_tip_r, wing_tip_r, wing_back_r, wing_back_r, wing_root_r,
+        wing_root_l, wing_root_r
+    });
 
-        // 机鼻/进气道/机身侧轮廓
-        0,7, 0,8, 7,8,
-        7,9, 8,10, 9,10,
-        9,11, 10,12, 11,12,
-        11,13, 12,14, 13,14,
-        13,15, 14,16, 15,16,
+    // 简化平尾 + 垂尾
+    const unsigned int tail_l = (unsigned int)m.vertices.size(); m.vertices.push_back({-1.9f, 0.06f, 5.0f});
+    const unsigned int tail_r = (unsigned int)m.vertices.size(); m.vertices.push_back({ 1.9f, 0.06f, 5.0f});
+    const unsigned int tail_c = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.0f, 0.08f, 4.6f});
+    const unsigned int fin_t  = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.0f, 1.45f, 5.05f});
 
-        // 机腹体积线
-        0,17, 17,18, 18,19, 19,6,
-        17,9, 17,10, 18,13, 18,14, 19,15, 19,16,
-
-        // 座舱框架
-        1,35, 1,36, 35,37, 36,38, 37,38, 37,2, 38,2,
-
-        // LERX 和主翼
-        20,21,
-        20,22, 21,23,
-        20,24, 21,25,
-        22,24, 23,25,
-        22,26, 23,27,
-        26,24, 27,25,
-        24,25, 26,27,
-        26,15, 27,16,
-
-        // 平尾
-        28,29, 28,30, 29,31, 30,31, 28,4, 29,4,
-
-        // 垂尾
-        32,33, 33,34, 34,32, 32,4, 34,6,
-
-        // 喷口/尾段
-        5,41, 5,42, 41,42, 41,43, 42,43, 19,43,
-
-        // 腹鳍
-        39,19, 40,19, 39,6, 40,6, 39,40,
-
-        // 纵向加强线（提高立体感）
-        3,13, 3,14, 4,15, 4,16,
-    };
+    m.line_indices.insert(m.line_indices.end(), {
+        tail_c, tail_l, tail_c, tail_r, tail_l, tail_r,
+        tail_c, fin_t
+    });
 
     return m;
 }
