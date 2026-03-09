@@ -24,6 +24,11 @@ public:
                    const glm::vec3& position,
                    const glm::quat& orientation,
                    const glm::vec3& color = {0.0f, 1.0f, 0.0f});
+    void draw_mesh_scaled(const WireMesh& mesh,
+                          const glm::vec3& position,
+                          const glm::quat& orientation,
+                          float uniform_scale,
+                          const glm::vec3& color = {0.0f, 1.0f, 0.0f});
 
     // 画世界坐标轴（调试用）
     void draw_axes(float length = 5.0f);
@@ -40,6 +45,12 @@ public:
                   float throttle,
                   float aoa_deg,
                   float beta_deg);
+    void draw_radar(const glm::vec3& player_pos,
+                    const std::vector<glm::vec3>& enemy_positions,
+                    const std::vector<glm::vec3>& enemy_velocities,
+                    const glm::vec3& player_velocity,
+                    float radar_range_world = 1200.0f);
+    void draw_attitude_gauge(const glm::vec3& euler_deg);
 
     // 相机控制
     void set_camera(const glm::vec3& eye,
@@ -63,3 +74,5 @@ private:
 
 // 工厂函数：生成简化战斗机线框模型（约40条线）
 WireMesh make_fighter_mesh();
+WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy);
+WireMesh make_carrier_mesh();

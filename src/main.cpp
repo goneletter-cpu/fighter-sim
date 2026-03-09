@@ -46,6 +46,69 @@ static float slew_to(float current, float target, float max_step) {
     return current + delta;
 }
 
+static float smooth_step(float e0, float e1, float x) {
+    float t = glm::clamp((x - e0) / glm::max(e1 - e0, 1e-6f), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+static WireMesh make_quadrant_overlay_mesh(float z_plane) {
+    WireMesh m;
+    auto add_seg = [&](const glm::vec3& a, const glm::vec3& b) {
+        unsigned int i = (unsigned int)m.vertices.size();
+        m.vertices.push_back(a);
+        m.vertices.push_back(b);
+        m.line_indices.push_back(i);
+        m.line_indices.push_back(i + 1);
+    };
+    auto add_dashed_seg = [&](const glm::vec3& a,
+                              const glm::vec3& b,
+                              float dash_len,
+                              float gap_len) {
+        glm::vec3 d = b - a;
+        float len = glm::length(d);
+        if (len < 1e-4f) return;
+        glm::vec3 dir = d / len;
+        float t = 0.0f;
+        while (t < len) {
+            float t0 = t;
+            float t1 = glm::min(t + dash_len, len);
+            add_seg(a + dir * t0, a + dir * t1);
+            t += dash_len + gap_len;
+        }
+    };
+
+    const float x_min = -760.0f;
+    const float x_max =  760.0f;
+    const float y_min =  260.0f;
+    const float y_max = 1700.0f;
+    const float origin_y = START_POS.y; // 1000
+    const float dash_len = 26.0f;
+    const float gap_len = 14.0f;
+
+    // 活动范围边框（虚线）
+    add_dashed_seg({x_min, y_min, z_plane}, {x_max, y_min, z_plane}, dash_len, gap_len);
+    add_dashed_seg({x_max, y_min, z_plane}, {x_max, y_max, z_plane}, dash_len, gap_len);
+    add_dashed_seg({x_max, y_max, z_plane}, {x_min, y_max, z_plane}, dash_len, gap_len);
+    add_dashed_seg({x_min, y_max, z_plane}, {x_min, y_min, z_plane}, dash_len, gap_len);
+
+    // 轴线：X=0 与 Y=origin_y（虚线）
+    add_dashed_seg({0.0f,  y_min,    z_plane}, {0.0f,  y_max,    z_plane}, dash_len, gap_len);
+    add_dashed_seg({x_min, origin_y, z_plane}, {x_max, origin_y, z_plane}, dash_len, gap_len);
+
+    // 原点强化标记（十字 + 小框）
+    const float o = 22.0f;
+    add_seg({-o, origin_y, z_plane}, { o, origin_y, z_plane});
+    add_seg({0.0f, origin_y - o, z_plane}, {0.0f, origin_y + o, z_plane});
+
+    const float b = 14.0f;
+    add_seg({-b, origin_y - b, z_plane}, { b, origin_y - b, z_plane});
+    add_seg({ b, origin_y - b, z_plane}, { b, origin_y + b, z_plane});
+    add_seg({ b, origin_y + b, z_plane}, {-b, origin_y + b, z_plane});
+    add_seg({-b, origin_y + b, z_plane}, {-b, origin_y - b, z_plane});
+
+    return m;
+}
+
 static void framebuffer_size_callback(GLFWwindow*, int width, int height) {
     glViewport(0, 0, width, height);
 }
@@ -183,6 +246,26 @@ struct AAShell {
     float ttl_s;
 };
 
+struct Explosion {
+    glm::vec3 position;
+    float ttl_s;
+    float max_ttl_s;
+};
+
+static WireMesh make_catapult_marks_mesh() {
+    WireMesh m;
+    // 航母甲板简化标记：中心线 + 双弹射器白线 + 端部横线
+    m.vertices = {
+        { 0.0f,  8.02f,  86.0f}, { 0.0f,  8.02f, -86.0f},   // center line
+        {-9.0f,  8.02f,  76.0f}, {-9.0f,  8.02f, -72.0f},   // catapult L
+        { 9.0f,  8.02f,  76.0f}, { 9.0f,  8.02f, -72.0f},   // catapult R
+        {-18.0f, 8.02f, -72.0f}, {18.0f,  8.02f, -72.0f},   // launch bar
+        {-14.0f, 8.02f,  28.0f}, {14.0f,  8.02f,  28.0f},   // landing mark
+    };
+    m.line_indices = {0,1, 2,3, 4,5, 6,7, 8,9};
+    return m;
+}
+
 static WireMesh make_bomb_mesh() {
     WireMesh m;
     m.vertices = {
@@ -250,6 +333,41 @@ static WireMesh make_cloud_mesh() {
     return m;
 }
 
+static WireMesh make_explosion_mesh() {
+    WireMesh m;
+    const int seg = 18;
+    const float rxy = 5.8f;
+    const float rz = 4.8f;
+    int b1 = 0;
+    for (int i = 0; i < seg; ++i) {
+        float t = (2.0f * glm::pi<float>() * i) / seg;
+        float wobble = 0.82f + 0.24f * std::sin(3.0f * t);
+        m.vertices.push_back({std::cos(t) * rxy * wobble, std::sin(t) * rxy * wobble, 0.0f});
+    }
+    int b2 = (int)m.vertices.size();
+    for (int i = 0; i < seg; ++i) {
+        float t = (2.0f * glm::pi<float>() * i) / seg;
+        float wobble = 0.78f + 0.26f * std::cos(2.0f * t + 0.7f);
+        m.vertices.push_back({std::cos(t) * rxy * wobble, 0.0f, std::sin(t) * rz * wobble});
+    }
+    int b3 = (int)m.vertices.size();
+    for (int i = 0; i < seg; ++i) {
+        float t = (2.0f * glm::pi<float>() * i) / seg;
+        float wobble = 0.80f + 0.22f * std::sin(4.0f * t + 0.5f);
+        m.vertices.push_back({0.0f, std::cos(t) * rxy * 0.85f * wobble, std::sin(t) * rz * wobble});
+    }
+    for (int i = 0; i < seg; ++i) {
+        int j = (i + 1) % seg;
+        m.line_indices.insert(m.line_indices.end(), {
+            (unsigned int)(b1 + i), (unsigned int)(b1 + j),
+            (unsigned int)(b2 + i), (unsigned int)(b2 + j),
+            (unsigned int)(b3 + i), (unsigned int)(b3 + j),
+            (unsigned int)(b1 + i), (unsigned int)(b2 + i)
+        });
+    }
+    return m;
+}
+
 static glm::quat orientation_from_forward(const glm::vec3& forward_world) {
     glm::vec3 f = glm::normalize(forward_world);
     glm::vec3 up_ref(0.0f, 1.0f, 0.0f);
@@ -264,25 +382,30 @@ static glm::quat orientation_from_forward(const glm::vec3& forward_world) {
 static void respawn_enemy(EnemyAircraft& enemy,
                           const AircraftState& player,
                           int idx,
-                          float t_now,
-                          int quadrant) {
+                          float t_now) {
     glm::mat3 world_from_body = glm::mat3_cast(player.orientation);
     glm::vec3 fwd = glm::normalize(world_from_body * glm::vec3(0, 0, -1));
     glm::vec3 right = glm::normalize(world_from_body * glm::vec3(1, 0, 0));
-    int sx = (quadrant == 1 || quadrant == 4) ? 1 : -1;
-    int sy = (quadrant == 1 || quadrant == 2) ? 1 : -1;
 
-    float lateral_mag = 170.0f + 95.0f * (idx % 4) + 45.0f * std::sin(0.7f * t_now + idx);
-    float vertical_mag = 90.0f + 48.0f * (idx % 4) + 40.0f * std::sin(0.9f * t_now + 0.7f * idx);
-    float lateral = sx * lateral_mag;
-    float vertical = sy * vertical_mag;
-    float ahead = 2200.0f + idx * 280.0f;
+    // 四象限都可出现，但分布贴近坐标轴：
+    // mode=0: 靠近Y轴（x小，y大）; mode=1: 靠近X轴（y小，x大）
+    int sx = ((idx + (int)(t_now * 3.0f)) % 2 == 0) ? 1 : -1;
+    int sy = ((idx + (int)(t_now * 2.0f)) % 2 == 0) ? 1 : -1;
+    int mode = (idx + (int)(t_now * 1.7f)) % 2;
 
-    float spawn_alt = glm::clamp(player.position.y + vertical, 260.0f, 2200.0f);
-    enemy.position = player.position + fwd * ahead + right * lateral;
-    enemy.position.y = spawn_alt;
+    float near_small = 45.0f + 70.0f * (0.5f + 0.5f * std::sin(0.8f * t_now + 1.3f * idx));
+    float near_large = 160.0f + 170.0f * (0.5f + 0.5f * std::cos(0.6f * t_now + 0.9f * idx));
+    float lateral = (mode == 0) ? sx * near_small : sx * near_large;
+    float vertical = (mode == 0) ? sy * near_large : sy * near_small;
+    float ahead = 1250.0f + idx * 170.0f;
+
+    enemy.position = player.position + fwd * ahead + right * lateral + glm::vec3(0.0f, vertical, 0.0f);
+    // 不超出玩家活动范围（与飞机移动边界一致）
+    enemy.position.x = glm::clamp(enemy.position.x, -660.0f, 660.0f);
+    enemy.position.y = glm::clamp(enemy.position.y, 240.0f, 1880.0f);
+
     glm::vec3 dir_to_player = glm::normalize(player.position - enemy.position);
-    enemy.velocity = dir_to_player * (190.0f + 12.0f * (idx % 3));
+    enemy.velocity = dir_to_player * (58.0f + 4.0f * (idx % 3));
     enemy.orientation = orientation_from_forward(enemy.velocity);
 }
 
@@ -362,9 +485,9 @@ static void apply_side_scroller_motion(AircraftState& state, float dt) {
     else if (qx < 0.0f && qy < 0.0f) g_motion_quadrant = 3;
     else g_motion_quadrant = 4;
 
-    const float scroll_speed = 185.0f;
-    const float side_speed = 95.0f;
-    const float vertical_speed = 80.0f;
+    const float scroll_speed = 128.0f;
+    const float side_speed = 88.0f;
+    const float vertical_speed = 74.0f;
 
     float target_vx = input_x * side_speed;
     float target_vy = input_y * vertical_speed;
@@ -376,8 +499,8 @@ static void apply_side_scroller_motion(AircraftState& state, float dt) {
     state.position += state.velocity * dt;
 
     // 边界限制（横版战场窗口）
-    state.position.x = glm::clamp(state.position.x, -680.0f, 680.0f);
-    state.position.y = glm::clamp(state.position.y, 220.0f, 1900.0f);
+    state.position.x = glm::clamp(state.position.x, -760.0f, 760.0f);
+    state.position.y = glm::clamp(state.position.y, 260.0f, 1700.0f);
 
     // 姿态视觉反馈：
     // W/S -> 俯仰，Q/E -> 机头绕机位偏转（偏航），A/D -> 翻滚
@@ -394,8 +517,7 @@ static void apply_side_scroller_motion(AircraftState& state, float dt) {
 static void update_enemies(std::vector<EnemyAircraft>& enemies,
                            const AircraftState& player,
                            float dt,
-                           float t_now,
-                           int quadrant) {
+                           float t_now) {
     glm::vec3 player_fwd = glm::normalize(glm::mat3_cast(player.orientation) * glm::vec3(0, 0, -1));
     for (size_t i = 0; i < enemies.size(); ++i) {
         EnemyAircraft& e = enemies[i];
@@ -406,9 +528,10 @@ static void update_enemies(std::vector<EnemyAircraft>& enemies,
         float ahead = glm::dot(rel, player_fwd);
         if (ahead < -500.0f ||
             glm::length(rel) > 4800.0f ||
+            e.position.x < -670.0f || e.position.x > 670.0f ||
             e.position.y < 140.0f ||
             e.position.y > player.position.y + 900.0f) {
-            respawn_enemy(e, player, (int)i, t_now, quadrant);
+            respawn_enemy(e, player, (int)i, t_now);
         }
     }
 }
@@ -465,12 +588,12 @@ static void update_ground_aa(std::vector<AABattery>& batteries,
 static void spawn_bomb(const AircraftState& aircraft, std::vector<Projectile>& bombs) {
     glm::mat3 world_from_body = glm::mat3_cast(aircraft.orientation);
     glm::vec3 forward = world_from_body * glm::vec3(0, 0, -1);
-    glm::vec3 up      = world_from_body * glm::vec3(0, 1, 0);
+    glm::vec3 right   = world_from_body * glm::vec3(1, 0, 0);
 
     Projectile b;
-    b.position = aircraft.position + forward * 1.8f - up * 1.4f;
-    b.velocity = aircraft.velocity + forward * 12.0f - up * 5.0f;
-    b.ttl = 18.0f;
+    b.position = aircraft.position + forward * 4.8f + right * 0.2f;
+    b.velocity = aircraft.velocity + forward * 165.0f;
+    b.ttl = 7.5f;
     bombs.push_back(b);
 }
 
@@ -494,7 +617,8 @@ static void update_projectiles(std::vector<Projectile>& bullets,
                                std::vector<Projectile>& bombs,
                                float dt) {
     for (auto& b : bombs) {
-        b.velocity += glm::vec3(0.0f, -9.81f, 0.0f) * dt;
+        // 导弹：保持惯性前飞，仅轻微下坠
+        b.velocity += glm::vec3(0.0f, -1.3f, 0.0f) * dt;
         b.position += b.velocity * dt;
         b.ttl -= dt;
     }
@@ -510,6 +634,13 @@ static void update_projectiles(std::vector<Projectile>& bullets,
     bombs.erase(std::remove_if(bombs.begin(), bombs.end(),
                 [](const Projectile& b) { return b.ttl <= 0.0f || b.position.y < 0.0f; }),
                 bombs.end());
+}
+
+static void update_explosions(std::vector<Explosion>& explosions, float dt) {
+    for (auto& e : explosions) e.ttl_s -= dt;
+    explosions.erase(std::remove_if(explosions.begin(), explosions.end(),
+                     [](const Explosion& e) { return e.ttl_s <= 0.0f; }),
+                     explosions.end());
 }
 
 static float wrap_pi(float a) {
@@ -722,8 +853,8 @@ static void update_chase_camera(const AircraftState& state,
     glm::vec3 tail_anchor = state.position + world_from_body * tail_anchor_local;
 
     // 隐形自拍杆：从尾翼锚点向后并略高，轻微右偏避免模型遮挡
-    glm::vec3 desired_eye = tail_anchor - forward * 44.0f + up * 9.0f + right * 1.5f;
-    glm::vec3 desired_target = tail_anchor + forward * 65.0f + up * 1.5f;
+    glm::vec3 desired_eye = tail_anchor - forward * 21.0f + up * 5.0f + right * 0.6f;
+    glm::vec3 desired_target = tail_anchor + forward * 30.0f + up * 1.0f;
 
     static bool initialized = false;
     static glm::vec3 smoothed_eye;
@@ -778,9 +909,12 @@ int main() {
 
     // 飞机模型
     WireMesh fighter_mesh = make_fighter_mesh();
+    WireMesh carrier_mesh = make_carrier_mesh();
+    WireMesh carrier_marks_mesh = make_catapult_marks_mesh();
     WireMesh bomb_mesh = make_bomb_mesh();
     WireMesh bullet_mesh = make_bullet_mesh();
     WireMesh cloud_mesh = make_cloud_mesh();
+    WireMesh explosion_mesh = make_explosion_mesh();
 
     // 飞行状态初始化
     AircraftState state;
@@ -800,6 +934,7 @@ int main() {
     std::vector<Cloud> clouds(14);
     std::vector<AABattery> aa_batteries;
     std::vector<AAShell> aa_shells;
+    std::vector<Explosion> explosions;
     int player_hp = 100;
     int score = 0;
     int muzzle_index = 0;
@@ -810,11 +945,15 @@ int main() {
     double last_time = glfwGetTime();
     double accumulator = 0.0;
     bool crashed = false;
+    bool intro_active = true;
+    double intro_time_s = 0.0;
+    const double intro_duration_s = 8.5;
+    const glm::vec3 carrier_pos(0.0f, START_POS.y - 70.0f, 220.0f);
 
     printf("Fighter Sim 启动\n");
     printf("OpenGL: %s\n", glGetString(GL_VERSION));
     for (size_t i = 0; i < enemies.size(); ++i) {
-        respawn_enemy(enemies[i], state, (int)i, 0.0f, g_motion_quadrant);
+        respawn_enemy(enemies[i], state, (int)i, 0.0f);
     }
     for (size_t i = 0; i < clouds.size(); ++i) {
         clouds[i].position = state.position + glm::vec3(
@@ -831,7 +970,8 @@ int main() {
     }
 
     printf("模式: 横版射击(3D表现)\n");
-    printf("操控: W/S=上下移动 A/D=左右移动 Q/E=轻微偏航姿态 Shift/Ctrl=油门 Space短按=炸弹 长按=机枪 ESC=退出\n\n");
+    printf("开场: 航母起飞动画（企业号风格）\n");
+    printf("操控: W/S=上下移动 A/D=左右移动 Q/E=轻微偏航姿态 Shift/Ctrl=油门 Space短按=导弹(近炸引信) 长按=机枪 ESC=退出\n\n");
 
     // ── 主循环 ────────────────────────────────────────────────────────────────
 
@@ -843,6 +983,58 @@ int main() {
         accumulator += frame_time;
 
         glfwPollEvents();
+
+        if (intro_active) {
+            intro_time_s += frame_time;
+            float nt = glm::clamp((float)(intro_time_s / intro_duration_s), 0.0f, 1.0f);
+            float run_t = smooth_step(0.02f, 0.58f, nt);
+            float climb_t = smooth_step(0.46f, 1.0f, nt);
+
+            float pitch = glm::mix(0.0f, glm::radians(18.0f), climb_t);
+            state.orientation = glm::quat(glm::vec3(pitch, 0.0f, 0.0f));
+            glm::vec3 forward = glm::normalize(glm::mat3_cast(state.orientation) * glm::vec3(0, 0, -1));
+
+            state.position = carrier_pos + glm::vec3(
+                0.0f,
+                14.0f + 90.0f * climb_t * climb_t,
+                106.0f - 560.0f * run_t
+            );
+            float launch_speed = 35.0f + 235.0f * run_t;
+            state.velocity = forward * launch_speed;
+            state.angular_vel = glm::vec3(0.0f);
+
+            glm::vec3 cam_pos = state.position + glm::vec3(76.0f, 30.0f, 90.0f);
+            glm::vec3 cam_target = state.position + forward * 70.0f + glm::vec3(0.0f, 7.0f, 0.0f);
+            renderer.set_camera(cam_pos, cam_target);
+
+            // 起飞后2秒收轮；襟翼稍晚开始回收
+            float takeoff_start = (float)(intro_duration_s * 0.58);
+            float gear_deploy = 1.0f - smooth_step(takeoff_start, takeoff_start + 2.0f, (float)intro_time_s);
+            float flap_deploy = 1.0f - smooth_step(takeoff_start + 0.35f, takeoff_start + 2.35f, (float)intro_time_s);
+            WireMesh intro_fighter_mesh = make_fighter_mesh_variant(gear_deploy, flap_deploy);
+
+            renderer.begin_frame();
+            renderer.draw_ground_grid(3200.0f, 120.0f, carrier_pos.y - 8.0f);
+            renderer.draw_mesh(carrier_mesh, carrier_pos, glm::quat(1, 0, 0, 0), {0.12f, 0.13f, 0.15f});
+            renderer.draw_mesh(carrier_marks_mesh, carrier_pos, glm::quat(1, 0, 0, 0), {0.92f, 0.92f, 0.92f});
+            renderer.draw_mesh(intro_fighter_mesh, state.position, state.orientation, {0.08f, 0.10f, 0.14f});
+            renderer.end_frame();
+            glfwSwapBuffers(window);
+
+            char intro_title[160];
+            std::snprintf(intro_title, sizeof(intro_title),
+                          "Fighter Sim | ENTERPRISE LAUNCH | %.0f%%",
+                          nt * 100.0f);
+            glfwSetWindowTitle(window, intro_title);
+
+            if (intro_time_s >= intro_duration_s) {
+                intro_active = false;
+                // 过渡到游戏模式的稳定前飞状态
+                state.velocity = glm::vec3(0.0f, 0.0f, -128.0f);
+                state.orientation = glm::quat(1, 0, 0, 0);
+            }
+            continue;
+        }
 
         double hold_duration = g_keys.fire_held ? (now - g_keys.fire_press_time) : 0.0;
         bool machine_gun_mode = g_keys.fire_held && hold_duration >= hold_fire_threshold_s;
@@ -880,18 +1072,20 @@ int main() {
             apply_hard_safety_floor(state, SIM_DT);
             update_projectiles(bullets, bombs, SIM_DT);
             update_ground_aa(aa_batteries, aa_shells, state, SIM_DT);
+            update_explosions(explosions, SIM_DT);
             accumulator -= SIM_DT;
         }
 
-        update_enemies(enemies, state, (float)frame_time, (float)now, g_motion_quadrant);
+        update_enemies(enemies, state, (float)frame_time, (float)now);
         update_clouds(clouds, state, (float)now);
 
-        // 命中检测：机枪打敌机 + 地面防空打玩家
+        // 命中检测：机枪/导弹打敌机 + 地面防空打玩家
         for (auto it_b = bullets.begin(); it_b != bullets.end();) {
             bool hit = false;
             for (size_t i = 0; i < enemies.size(); ++i) {
                 if (glm::distance(it_b->position, enemies[i].position) < 26.0f) {
-                    respawn_enemy(enemies[i], state, (int)i, (float)now, g_motion_quadrant);
+                    explosions.push_back(Explosion{enemies[i].position, 0.45f, 0.45f});
+                    respawn_enemy(enemies[i], state, (int)i, (float)now);
                     score += 10;
                     hit = true;
                     break;
@@ -899,6 +1093,21 @@ int main() {
             }
             if (hit) it_b = bullets.erase(it_b);
             else ++it_b;
+        }
+        // 导弹近炸引信：接近目标即引爆
+        for (auto it_m = bombs.begin(); it_m != bombs.end();) {
+            bool exploded = false;
+            for (size_t i = 0; i < enemies.size(); ++i) {
+                if (glm::distance(it_m->position, enemies[i].position) < 58.0f) {
+                    explosions.push_back(Explosion{enemies[i].position, 0.52f, 0.52f});
+                    respawn_enemy(enemies[i], state, (int)i, (float)now);
+                    score += 20;
+                    exploded = true;
+                    break;
+                }
+            }
+            if (exploded) it_m = bombs.erase(it_m);
+            else ++it_m;
         }
         for (auto it_s = aa_shells.begin(); it_s != aa_shells.end();) {
             if (glm::distance(it_s->position, state.position) < 24.0f) {
@@ -933,8 +1142,12 @@ int main() {
 
         // 渲染
         renderer.begin_frame();
-        renderer.draw_ground_grid(8000.0f, 200.0f, 0.0f);
+        renderer.draw_ground_grid(3200.0f, 120.0f, 0.0f);
         renderer.draw_axes(80.0f);
+        float qz = state.position.z - 220.0f;
+        WireMesh quadrant_overlay = make_quadrant_overlay_mesh(qz);
+        renderer.draw_mesh(quadrant_overlay, glm::vec3(0, 0, 0), glm::quat(1, 0, 0, 0),
+                           {0.20f, 0.45f, 0.55f});
         for (const auto& c : clouds) {
             renderer.draw_mesh(cloud_mesh, c.position, glm::quat(1, 0, 0, 0), {0.86f, 0.88f, 0.91f});
         }
@@ -953,6 +1166,28 @@ int main() {
         for (const auto& s : aa_shells) {
             renderer.draw_mesh(bullet_mesh, s.position, identity_q, {0.78f, 0.18f, 0.10f});
         }
+        for (const auto& ex : explosions) {
+            float t = 1.0f - ex.ttl_s / ex.max_ttl_s;
+            // 与敌机同位置、同量级，做“火团”扩张
+            float outer_scale = 1.0f + 0.32f * t;
+            float inner_scale = 0.72f + 0.18f * t;
+            glm::vec3 outer_color = glm::mix(glm::vec3(1.00f, 0.78f, 0.18f),
+                                             glm::vec3(0.90f, 0.16f, 0.06f), t);
+            glm::vec3 inner_color = glm::mix(glm::vec3(1.00f, 0.95f, 0.45f),
+                                             glm::vec3(1.00f, 0.56f, 0.12f), t);
+            renderer.draw_mesh_scaled(explosion_mesh, ex.position, identity_q, outer_scale, outer_color);
+            renderer.draw_mesh_scaled(explosion_mesh, ex.position, identity_q, inner_scale, inner_color);
+        }
+        std::vector<glm::vec3> enemy_positions;
+        std::vector<glm::vec3> enemy_velocities;
+        enemy_positions.reserve(enemies.size());
+        enemy_velocities.reserve(enemies.size());
+        for (const auto& e : enemies) {
+            enemy_positions.push_back(e.position);
+            enemy_velocities.push_back(e.velocity);
+        }
+        renderer.draw_radar(state.position, enemy_positions, enemy_velocities, state.velocity, 720.0f);
+        renderer.draw_attitude_gauge(glm::degrees(state.euler_angles()));
         renderer.end_frame();
 
         glfwSwapBuffers(window);
