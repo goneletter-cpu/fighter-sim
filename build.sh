@@ -1,28 +1,28 @@
 #!/bin/bash
-set -e  # 任何命令失败就停下来
+set -e  # stop on first command failure
 
 echo "=== Fighter Sim Build ==="
 
-# ── 1. 检查 Homebrew ──────────────────────────────────────────────────────────
+# translated comment
 if ! command -v brew &>/dev/null; then
     echo "[错误] 没有找到 Homebrew。请先安装："
     echo "  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
     exit 1
 fi
 
-# ── 2. 安装依赖（已安装则跳过）────────────────────────────────────────────────
+# translated comment
 echo "[1/3] 检查依赖..."
 brew list glfw &>/dev/null || brew install glfw
 brew list glm  &>/dev/null || brew install glm
 
-# ── 3. 找头文件和库路径 ────────────────────────────────────────────────────────
+# translated comment
 GLFW_PREFIX=$(brew --prefix glfw)
 GLM_PREFIX=$(brew --prefix glm)
 
 INCLUDES="-I include -I${GLFW_PREFIX}/include -I${GLM_PREFIX}/include"
 LIBS="-L${GLFW_PREFIX}/lib -lglfw -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo"
 
-# ── 4. 编译 ───────────────────────────────────────────────────────────────────
+# translated comment
 echo "[2/3] 编译..."
 mkdir -p build
 

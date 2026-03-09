@@ -10,23 +10,23 @@ PID::PID(float kp, float ki, float kd, float output_limit)
 float PID::update(float setpoint, float measured, float dt) {
     float error = setpoint - measured;
 
-    // 微分项（第一帧跳过，避免导数突变）
+    //  translated comment
     float derivative = 0.0f;
     if (!first_run_) {
         derivative = (error - prev_error_) / dt;
     }
     first_run_ = false;
 
-    // 比例项输出（先算，用于anti-windup判断）
+    //  translated comment
     float p_out = kp_ * error;
     float d_out = kd_ * derivative;
 
-    // 积分项 + anti-windup：只有在输出未饱和时才累积积分
+    //  translated comment
     float pre_integral_out = p_out + ki_ * integral_ + d_out;
     bool saturated = (pre_integral_out > output_limit_) ||
                      (pre_integral_out < -output_limit_);
 
-    // 条件积分：饱和时且误差和积分同号则不再累积
+    //  translated comment
     bool same_sign = (error > 0 && integral_ > 0) ||
                      (error < 0 && integral_ < 0);
     if (!(saturated && same_sign)) {

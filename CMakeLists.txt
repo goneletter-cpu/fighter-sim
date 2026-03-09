@@ -4,12 +4,12 @@ project(FighterSim VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 找依赖
+# translated comment
 find_package(OpenGL REQUIRED)
 find_package(glfw3 REQUIRED)
 find_package(glm REQUIRED)
 
-# 源文件
+# translated comment
 file(GLOB_RECURSE SOURCES "src/*.cpp")
 
 add_executable(fighter_sim ${SOURCES})
@@ -22,7 +22,7 @@ target_link_libraries(fighter_sim
     glm::glm
 )
 
-# 编译警告
+# translated comment
 target_compile_options(fighter_sim PRIVATE
     -Wall -Wextra -Wpedantic
 )

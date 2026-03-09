@@ -13,15 +13,15 @@
 #include "flight_controller.h"
 #include "renderer.h"
 
-// ── 窗口参数 ──────────────────────────────────────────────────────────────────
+// ──  translated comment
 
 static const int   WIDTH  = 1280;
 static const int   HEIGHT = 720;
-static const float SIM_DT = 1.0f / 120.0f;   // 物理步长120Hz，渲染按实际帧率
+static const float SIM_DT = 1.0f / 120.0f;   //  translated comment
 static const glm::vec3 START_POS(0.0f, 1000.0f, 0.0f);
-[[maybe_unused]] static const glm::vec3 FIXED_WAYPOINT(6000.0f, 1800.0f, -8000.0f); // x/y/z均与起点不同
+[[maybe_unused]] static const glm::vec3 FIXED_WAYPOINT(6000.0f, 1800.0f, -8000.0f); // x/y/z translated comment
 
-// ── 键盘状态 ──────────────────────────────────────────────────────────────────
+// ──  translated comment
 
 struct KeyState {
     bool pitch_up   = false;
@@ -85,17 +85,17 @@ static WireMesh make_quadrant_overlay_mesh(float z_plane) {
     const float dash_len = 26.0f;
     const float gap_len = 14.0f;
 
-    // 活动范围边框（虚线）
+    //  translated comment
     add_dashed_seg({x_min, y_min, z_plane}, {x_max, y_min, z_plane}, dash_len, gap_len);
     add_dashed_seg({x_max, y_min, z_plane}, {x_max, y_max, z_plane}, dash_len, gap_len);
     add_dashed_seg({x_max, y_max, z_plane}, {x_min, y_max, z_plane}, dash_len, gap_len);
     add_dashed_seg({x_min, y_max, z_plane}, {x_min, y_min, z_plane}, dash_len, gap_len);
 
-    // 轴线：X=0 与 Y=origin_y（虚线）
+    //  translated comment
     add_dashed_seg({0.0f,  y_min,    z_plane}, {0.0f,  y_max,    z_plane}, dash_len, gap_len);
     add_dashed_seg({x_min, origin_y, z_plane}, {x_max, origin_y, z_plane}, dash_len, gap_len);
 
-    // 原点强化标记（十字 + 小框）
+    //  translated comment
     const float o = 22.0f;
     add_seg({-o, origin_y, z_plane}, { o, origin_y, z_plane});
     add_seg({0.0f, origin_y - o, z_plane}, {0.0f, origin_y + o, z_plane});
@@ -140,8 +140,8 @@ static void key_callback(GLFWwindow* win, int key, int, int action, int) {
     }
 }
 
-// 玩家输入只作为“干预量”，叠加在自动驾驶指令上
-// base_cmd 是自动驾驶给出的基线指令，松杆时回到基线而不是回0，避免与自动驾驶打架
+//  translated comment
+// base_cmd  translated comment
 static void apply_player_intervention(AttitudeCommand& cmd,
                                       const AttitudeCommand& base_cmd,
                                       float dt) {
@@ -159,7 +159,7 @@ static void apply_player_intervention(AttitudeCommand& cmd,
     if (g_keys.throttle_up)   cmd.throttle += THR_DELTA * dt;
     if (g_keys.throttle_down) cmd.throttle -= THR_DELTA * dt;
 
-    // 稳定增强：松杆后回到自动驾驶基线，避免持续偏置
+    //  translated comment
     if (!g_keys.pitch_up && !g_keys.pitch_down) {
         cmd.pitch_rad = slew_to(cmd.pitch_rad, base_cmd.pitch_rad, glm::radians(18.0f) * dt);
     }
@@ -176,7 +176,7 @@ static void apply_player_intervention(AttitudeCommand& cmd,
     cmd.throttle  = glm::clamp(cmd.throttle, 0.0f, 1.0f);
 }
 
-// 玩家输入产生角加速度，结合轴间耦合形成“有惯性”的姿态反馈
+//  translated comment
 // Real physics helper (currently disabled in side-scroller mode).
 // Kept intentionally for future full-physics expansion.
 [[maybe_unused]] static void apply_direct_player_attitude_control(AircraftState& state, float dt) {
@@ -191,14 +191,14 @@ static void apply_player_intervention(AttitudeCommand& cmd,
     if (g_keys.yaw_left)   yaw_input   += 1.0f;
     if (g_keys.yaw_right)  yaw_input   -= 1.0f;
 
-    // 输入映射为角加速度（不是直接把角速度拉到目标）
+    //  translated comment
     glm::vec3 input_accel(
         pitch_input * glm::radians(165.0f), // x: pitch accel
         yaw_input   * glm::radians(130.0f), // y: yaw accel
         roll_input  * glm::radians(240.0f)  // z: roll accel
     );
 
-    // 轴间耦合：滚转会诱导偏航，偏航会诱导少量俯仰
+    //  translated comment
     glm::vec3 coupled_accel(
         -0.18f * state.angular_vel.y * std::abs(state.angular_vel.z),
         -0.28f * state.angular_vel.z * (0.7f + 0.3f * std::abs(roll_input)),
@@ -207,13 +207,13 @@ static void apply_player_intervention(AttitudeCommand& cmd,
 
     state.angular_vel += (input_accel + coupled_accel) * dt;
 
-    // 速率阻尼（有输入也存在），避免原地高频抽搐
+    //  translated comment
     glm::vec3 damping(1.8f, 2.2f, 2.0f);
     state.angular_vel.x -= state.angular_vel.x * damping.x * dt;
     state.angular_vel.y -= state.angular_vel.y * damping.y * dt;
     state.angular_vel.z -= state.angular_vel.z * damping.z * dt;
 
-    // 软限幅，防止异常值
+    //  translated comment
     state.angular_vel.x = glm::clamp(state.angular_vel.x, glm::radians(-130.0f), glm::radians(130.0f));
     state.angular_vel.y = glm::clamp(state.angular_vel.y, glm::radians(-120.0f), glm::radians(120.0f));
     state.angular_vel.z = glm::clamp(state.angular_vel.z, glm::radians(-170.0f), glm::radians(170.0f));
@@ -254,7 +254,7 @@ struct Explosion {
 
 static WireMesh make_catapult_marks_mesh() {
     WireMesh m;
-    // 航母甲板简化标记：中心线 + 双弹射器白线 + 端部横线
+    //  translated comment
     m.vertices = {
         { 0.0f,  8.02f,  86.0f}, { 0.0f,  8.02f, -86.0f},   // center line
         {-9.0f,  8.02f,  76.0f}, {-9.0f,  8.02f, -72.0f},   // catapult L
@@ -375,7 +375,7 @@ static glm::quat orientation_from_forward(const glm::vec3& forward_world) {
     if (glm::length(right) < 1e-4f) right = glm::vec3(1.0f, 0.0f, 0.0f);
     right = glm::normalize(right);
     glm::vec3 up = glm::normalize(glm::cross(-f, right));
-    glm::mat3 basis(right, up, -f); // local -Z 对齐到 forward_world
+    glm::mat3 basis(right, up, -f); // local -Z  translated comment
     return glm::normalize(glm::quat_cast(basis));
 }
 
@@ -387,8 +387,8 @@ static void respawn_enemy(EnemyAircraft& enemy,
     glm::vec3 fwd = glm::normalize(world_from_body * glm::vec3(0, 0, -1));
     glm::vec3 right = glm::normalize(world_from_body * glm::vec3(1, 0, 0));
 
-    // 四象限都可出现，但分布贴近坐标轴：
-    // mode=0: 靠近Y轴（x小，y大）; mode=1: 靠近X轴（y小，x大）
+    //  translated comment
+    // mode=0:  translated comment
     int sx = ((idx + (int)(t_now * 3.0f)) % 2 == 0) ? 1 : -1;
     int sy = ((idx + (int)(t_now * 2.0f)) % 2 == 0) ? 1 : -1;
     int mode = (idx + (int)(t_now * 1.7f)) % 2;
@@ -400,7 +400,7 @@ static void respawn_enemy(EnemyAircraft& enemy,
     float ahead = 1250.0f + idx * 170.0f;
 
     enemy.position = player.position + fwd * ahead + right * lateral + glm::vec3(0.0f, vertical, 0.0f);
-    // 不超出玩家活动范围（与飞机移动边界一致）
+    //  translated comment
     enemy.position.x = glm::clamp(enemy.position.x, -660.0f, 660.0f);
     enemy.position.y = glm::clamp(enemy.position.y, 240.0f, 1880.0f);
 
@@ -419,16 +419,16 @@ static void respawn_enemy(EnemyAircraft& enemy,
     glm::mat3 body_from_world = glm::transpose(world_from_body);
     glm::vec3 v_body = body_from_world * state.velocity;
 
-    float forward_speed = -v_body.z; // local -Z 为机头方向
+    float forward_speed = -v_body.z; // local -Z  translated comment
     float target_speed = 185.0f;
     float thrust_accel = (target_speed - forward_speed) * 1.6f;
     v_body.z -= thrust_accel * dt;
 
-    // 侧滑阻尼和垂向阻尼：防止“抽搐式横摆”
+    //  translated comment
     v_body.x += (-2.4f * v_body.x) * dt;
     v_body.y += (-1.7f * v_body.y) * dt;
 
-    // 姿态到动力转换：机体上方向与世界重力的夹角决定升力方向
+    //  translated comment
     glm::vec3 horiz_lift(up.x, 0.0f, up.z);
     float hl = glm::length(horiz_lift);
     if (hl > 1e-4f) {
@@ -437,25 +437,25 @@ static void respawn_enemy(EnemyAircraft& enemy,
         float turn_accel = 20.0f * hl * speed_factor;
         state.velocity += horiz_lift * turn_accel * dt;
 
-        // 协调转弯耦合：滚转引入偏航角速度变化
+        //  translated comment
         float bank_sign = glm::dot(right, glm::vec3(0, 1, 0));
         state.angular_vel.y += -bank_sign * glm::radians(22.0f) * speed_factor * dt;
     }
 
-    // 抬头时提供附加升力，低头时减弱，减少“原地颤振式升降”
+    //  translated comment
     float pitch_lift = glm::clamp(fwd.y, -0.6f, 0.7f);
     state.velocity.y += pitch_lift * 14.0f * dt;
 
-    // 回写速度（保留上面的世界系修正）
+    //  translated comment
     glm::vec3 world_from_body_v = world_from_body * v_body;
     state.velocity.x = 0.65f * state.velocity.x + 0.35f * world_from_body_v.x;
     state.velocity.y = 0.65f * state.velocity.y + 0.35f * world_from_body_v.y;
     state.velocity.z = 0.65f * state.velocity.z + 0.35f * world_from_body_v.z;
 }
 
-// 横版射击运动：始终向前卷轴，玩家只控制上下/左右机动
+//  translated comment
 static void apply_side_scroller_motion(AircraftState& state, float dt) {
-    // 坐标轴定义：WS=Y轴，QE=X轴；AD依据象限变成斜向轴
+    //  translated comment
     float axis_x = 0.0f;
     float axis_y = 0.0f;
     float ad = 0.0f;
@@ -477,7 +477,7 @@ static void apply_side_scroller_motion(AircraftState& state, float dt) {
     input_x = glm::clamp(input_x, -1.0f, 1.0f);
     input_y = glm::clamp(input_y, -1.0f, 1.0f);
 
-    // 当前象限（用于限制运动与敌机出现）
+    //  translated comment
     float qx = (std::abs(axis_x) > 0.1f) ? axis_x : input_x;
     float qy = (std::abs(axis_y) > 0.1f) ? axis_y : (float)y_sign;
     if (qx >= 0.0f && qy >= 0.0f) g_motion_quadrant = 1;
@@ -498,12 +498,12 @@ static void apply_side_scroller_motion(AircraftState& state, float dt) {
     state.velocity.z = -scroll_speed;
     state.position += state.velocity * dt;
 
-    // 边界限制（横版战场窗口）
+    //  translated comment
     state.position.x = glm::clamp(state.position.x, -760.0f, 760.0f);
     state.position.y = glm::clamp(state.position.y, 260.0f, 1700.0f);
 
-    // 姿态视觉反馈：
-    // W/S -> 俯仰，Q/E -> 机头绕机位偏转（偏航），A/D -> 翻滚
+    //  translated comment
+    // W/S ->  translated comment
     float target_pitch = glm::radians(10.0f) * axis_y;
     float target_yaw   = glm::radians(16.0f) * axis_x;
     float target_roll  = glm::radians(-24.0f) * ad;
@@ -617,7 +617,7 @@ static void update_projectiles(std::vector<Projectile>& bullets,
                                std::vector<Projectile>& bombs,
                                float dt) {
     for (auto& b : bombs) {
-        // 导弹：保持惯性前飞，仅轻微下坠
+        //  translated comment
         b.velocity += glm::vec3(0.0f, -1.3f, 0.0f) * dt;
         b.position += b.velocity * dt;
         b.ttl -= dt;
@@ -666,7 +666,7 @@ static AttitudeCommand build_combat_assist_command(const AircraftState& state,
         if (dist < 1.0f) continue;
         float ahead = glm::dot(rel, forward);
         if (ahead < -300.0f) continue;
-        float score = dist - 0.35f * ahead; // 偏好更近且在前方的目标
+        float score = dist - 0.35f * ahead; //  translated comment
         if (score < best_score) {
             best_score = score;
             target = &e;
@@ -714,7 +714,7 @@ static AttitudeCommand build_combat_assist_command(const AircraftState& state,
     glm::vec3 to_target = waypoint - state.position;
     float distance = glm::length(to_target);
 
-    // 航向控制基于机头方向，避免速度向量侧滑时引入抖动
+    //  translated comment
     glm::vec3 forward = glm::normalize(glm::mat3_cast(state.orientation) * glm::vec3(0, 0, -1));
     float speed = glm::length(state.velocity);
 
@@ -722,7 +722,7 @@ static AttitudeCommand build_combat_assist_command(const AircraftState& state,
     float desired_heading = std::atan2(to_target.x, -to_target.z);
     float heading_error = wrap_pi(desired_heading - current_heading);
     if (std::abs(heading_error) < glm::radians(1.2f)) {
-        heading_error = 0.0f;  // 死区，防止小角度来回抖动
+        heading_error = 0.0f;  //  translated comment
     }
 
     float horiz_dist = glm::length(glm::vec2(to_target.x, to_target.z));
@@ -731,13 +731,13 @@ static AttitudeCommand build_combat_assist_command(const AircraftState& state,
 
     float desired_roll = glm::clamp(heading_error * 1.05f,
                                     glm::radians(-28.0f), glm::radians(28.0f));
-    // 协调转弯补偿：有滚转时给少量抬头，减小转弯掉高
+    //  translated comment
     desired_pitch += 0.10f * std::abs(desired_roll);
-    // 角速度阻尼，减小高频抽搐
+    //  translated comment
     desired_pitch -= 0.22f * state.angular_vel.x;  // pitch rate q
     desired_roll  -= 0.28f * state.angular_vel.z;  // roll rate p
 
-    // 非机动阶段倾向于摆正姿态
+    //  translated comment
     float align = glm::clamp(1.0f - std::abs(heading_error) / glm::radians(16.0f), 0.0f, 1.0f);
     desired_roll = glm::mix(desired_roll, 0.0f, 0.78f * align);
 
@@ -771,12 +771,12 @@ static AttitudeCommand build_combat_assist_command(const AircraftState& state,
     return distance;
 }
 
-// 硬性保底防下坠：高度过低或下降过快时，强制抬头+加油门+改平
+//  translated comment
 static void apply_sink_guard(const AircraftState& state, float dt, AttitudeCommand& cmd) {
     float alt = state.position.y;
-    float sink_rate = -state.velocity.y; // >0 表示正在下坠
+    float sink_rate = -state.velocity.y; // >0  translated comment
 
-    // 渐进触发：越低、下坠越快，保护越强
+    //  translated comment
     float alt_factor = glm::clamp((650.0f - alt) / 450.0f, 0.0f, 1.0f);
     float sink_factor = glm::clamp((sink_rate - 10.0f) / 22.0f, 0.0f, 1.0f);
     float g = glm::max(alt_factor, sink_factor);
@@ -791,7 +791,7 @@ static void apply_sink_guard(const AircraftState& state, float dt, AttitudeComma
         cmd.yaw_rate_rad_s = slew_to(cmd.yaw_rate_rad_s, 0.0f, glm::radians(40.0f) * dt * (0.35f + g));
     }
 
-    // 硬触发：接近地面时直接进入最大恢复
+    //  translated comment
     if (alt < 180.0f || sink_rate > 42.0f) {
         cmd.pitch_rad = glm::radians(18.0f);
         cmd.roll_rad = slew_to(cmd.roll_rad, 0.0f, glm::radians(90.0f) * dt);
@@ -805,31 +805,31 @@ static void apply_sink_guard(const AircraftState& state, float dt, AttitudeComma
     cmd.throttle  = glm::clamp(cmd.throttle, 0.0f, 1.0f);
 }
 
-// 状态级硬保护：即便控制器瞬时失效，也尽量防止继续下坠到撞地
+//  translated comment
 static void apply_hard_safety_floor(AircraftState& state, float dt) {
     float alt = state.position.y;
 
     if (alt < 520.0f) {
         float g = glm::clamp((520.0f - alt) / 420.0f, 0.0f, 1.0f);
 
-        // 低空逐步限制最大下沉率
+        //  translated comment
         float min_vy = glm::mix(-18.0f, -1.8f, g);
         if (state.velocity.y < min_vy) {
             state.velocity.y = slew_to(state.velocity.y, min_vy, 62.0f * dt);
         }
 
-        // 低空抑制俯仰/滚转角速度，减少抽搐和翻滚带来的失控下坠
+        //  translated comment
         float damp = std::exp(-3.6f * g * dt);
         state.angular_vel.x *= damp;
         state.angular_vel.z *= damp;
     }
 
-    // 临近地面时，强制把垂向速度拉回到非负
+    //  translated comment
     if (alt < 140.0f && state.velocity.y < 0.0f) {
         state.velocity.y = slew_to(state.velocity.y, 0.0f, 95.0f * dt);
     }
 
-    // 最终硬地板：保证不会撞地（可按需调整高度）
+    //  translated comment
     const float HARD_ALT_FLOOR = 45.0f;
     if (state.position.y < HARD_ALT_FLOOR) {
         state.position.y = HARD_ALT_FLOOR;
@@ -837,7 +837,7 @@ static void apply_hard_safety_floor(AircraftState& state, float dt) {
     }
 }
 
-// ── 带惯性的追踪相机（不完全绑定机体，避免“原地打转”观感）─────────────────────
+// ──  translated comment
 
 static void update_chase_camera(const AircraftState& state,
                                 float dt,
@@ -848,11 +848,11 @@ static void update_chase_camera(const AircraftState& state,
     glm::vec3 up = glm::normalize(world_from_body * glm::vec3(0, 1, 0));
     glm::vec3 right = glm::normalize(world_from_body * glm::vec3(1, 0, 0));
 
-    // 尾翼锚点（机体局部坐标，接近垂尾根部）
+    //  translated comment
     glm::vec3 tail_anchor_local(0.0f, 0.70f, 3.20f);
     glm::vec3 tail_anchor = state.position + world_from_body * tail_anchor_local;
 
-    // 隐形自拍杆：从尾翼锚点向后并略高，轻微右偏避免模型遮挡
+    //  translated comment
     glm::vec3 desired_eye = tail_anchor - forward * 21.0f + up * 5.0f + right * 0.6f;
     glm::vec3 desired_target = tail_anchor + forward * 30.0f + up * 1.0f;
 
@@ -876,7 +876,7 @@ static void update_chase_camera(const AircraftState& state,
 // ── main ─────────────────────────────────────────────────────────────────────
 
 int main() {
-    // GLFW初始化
+    // GLFW translated comment
     if (!glfwInit()) {
         printf("GLFW init failed\n");
         return 1;
@@ -884,7 +884,7 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);  // macOS 必须
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);  // macOS  translated comment
 
     GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "Fighter Sim", nullptr, nullptr);
     if (!window) {
@@ -900,14 +900,14 @@ int main() {
     glfwGetFramebufferSize(window, &fb_w, &fb_h);
     glViewport(0, 0, fb_w, fb_h);
 
-    // 渲染器初始化
+    //  translated comment
     Renderer renderer(WIDTH, HEIGHT);
     if (!renderer.init()) {
         printf("Renderer init failed\n");
         return 1;
     }
 
-    // 飞机模型
+    //  translated comment
     WireMesh fighter_mesh = make_fighter_mesh();
     WireMesh carrier_mesh = make_carrier_mesh();
     WireMesh carrier_marks_mesh = make_catapult_marks_mesh();
@@ -916,11 +916,11 @@ int main() {
     WireMesh cloud_mesh = make_cloud_mesh();
     WireMesh explosion_mesh = make_explosion_mesh();
 
-    // 飞行状态初始化
+    //  translated comment
     AircraftState state;
-    state.position    = START_POS;                  // 1000m高度
-    state.velocity    = glm::vec3(0, 0, -150.0f);   // 初速150m/s向前
-    state.orientation = glm::quat(1, 0, 0, 0);      // 水平飞行
+    state.position    = START_POS;                  // 1000m translated comment
+    state.velocity    = glm::vec3(0, 0, -150.0f);   //  translated comment
+    state.orientation = glm::quat(1, 0, 0, 0);      //  translated comment
     state.angular_vel = glm::vec3(0, 0, 0);
 
     AttitudeCommand command;
@@ -973,13 +973,13 @@ int main() {
     printf("开场: 航母起飞动画（企业号风格）\n");
     printf("操控: W/S=上下移动 A/D=左右移动 Q/E=轻微偏航姿态 Shift/Ctrl=油门 Space短按=导弹(近炸引信) 长按=机枪 ESC=退出\n\n");
 
-    // ── 主循环 ────────────────────────────────────────────────────────────────
+    // ──  translated comment
 
     while (!glfwWindowShouldClose(window)) {
         double now = glfwGetTime();
         double frame_time = now - last_time;
         last_time = now;
-        if (frame_time > 0.1) frame_time = 0.1;   // 防止死机时间爆炸
+        if (frame_time > 0.1) frame_time = 0.1;   //  translated comment
         accumulator += frame_time;
 
         glfwPollEvents();
@@ -1007,7 +1007,7 @@ int main() {
             glm::vec3 cam_target = state.position + forward * 70.0f + glm::vec3(0.0f, 7.0f, 0.0f);
             renderer.set_camera(cam_pos, cam_target);
 
-            // 起飞后2秒收轮；襟翼稍晚开始回收
+            //  translated comment
             float takeoff_start = (float)(intro_duration_s * 0.58);
             float gear_deploy = 1.0f - smooth_step(takeoff_start, takeoff_start + 2.0f, (float)intro_time_s);
             float flap_deploy = 1.0f - smooth_step(takeoff_start + 0.35f, takeoff_start + 2.35f, (float)intro_time_s);
@@ -1029,7 +1029,7 @@ int main() {
 
             if (intro_time_s >= intro_duration_s) {
                 intro_active = false;
-                // 过渡到游戏模式的稳定前飞状态
+                //  translated comment
                 state.velocity = glm::vec3(0.0f, 0.0f, -128.0f);
                 state.orientation = glm::quat(1, 0, 0, 0);
             }
@@ -1060,7 +1060,7 @@ int main() {
         apply_player_intervention(command, base_command, (float)frame_time);
         apply_sink_guard(state, (float)frame_time, command);
 
-        // 固定步长物理更新
+        //  translated comment
         while (accumulator >= SIM_DT) {
             // --- Real Physics Path (reserved for future expansion) ---
             // apply_direct_player_attitude_control(state, SIM_DT);
@@ -1079,7 +1079,7 @@ int main() {
         update_enemies(enemies, state, (float)frame_time, (float)now);
         update_clouds(clouds, state, (float)now);
 
-        // 命中检测：机枪/导弹打敌机 + 地面防空打玩家
+        //  translated comment
         for (auto it_b = bullets.begin(); it_b != bullets.end();) {
             bool hit = false;
             for (size_t i = 0; i < enemies.size(); ++i) {
@@ -1094,7 +1094,7 @@ int main() {
             if (hit) it_b = bullets.erase(it_b);
             else ++it_b;
         }
-        // 导弹近炸引信：接近目标即引爆
+        //  translated comment
         for (auto it_m = bombs.begin(); it_m != bombs.end();) {
             bool exploded = false;
             for (size_t i = 0; i < enemies.size(); ++i) {
@@ -1135,12 +1135,12 @@ int main() {
             continue;
         }
 
-        // 追踪相机
+        //  translated comment
         glm::vec3 cam_pos, cam_target;
         update_chase_camera(state, (float)frame_time, cam_pos, cam_target);
         renderer.set_camera(cam_pos, cam_target);
 
-        // 渲染
+        //  translated comment
         renderer.begin_frame();
         renderer.draw_ground_grid(3200.0f, 120.0f, 0.0f);
         renderer.draw_axes(80.0f);
@@ -1152,7 +1152,7 @@ int main() {
             renderer.draw_mesh(cloud_mesh, c.position, glm::quat(1, 0, 0, 0), {0.86f, 0.88f, 0.91f});
         }
         renderer.draw_mesh(fighter_mesh, state.position, state.orientation,
-                           {0.08f, 0.10f, 0.14f});   // 白底下清晰的深色线框
+                           {0.08f, 0.10f, 0.14f});   //  translated comment
         for (const auto& e : enemies) {
             renderer.draw_mesh(fighter_mesh, e.position, e.orientation, {0.72f, 0.12f, 0.10f});
         }
@@ -1168,7 +1168,7 @@ int main() {
         }
         for (const auto& ex : explosions) {
             float t = 1.0f - ex.ttl_s / ex.max_ttl_s;
-            // 与敌机同位置、同量级，做“火团”扩张
+            //  translated comment
             float outer_scale = 1.0f + 0.32f * t;
             float inner_scale = 0.72f + 0.18f * t;
             glm::vec3 outer_color = glm::mix(glm::vec3(1.00f, 0.78f, 0.18f),
@@ -1192,7 +1192,7 @@ int main() {
 
         glfwSwapBuffers(window);
 
-        // 终端HUD
+        //  translated comment
         glm::vec3 euler_rad = state.euler_angles();
         glm::vec3 euler_deg = glm::degrees(euler_rad);
         glm::vec3 body_vel = glm::mat3_cast(glm::inverse(state.orientation)) * state.velocity;

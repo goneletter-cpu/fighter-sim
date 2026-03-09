@@ -1,6 +1,6 @@
 #include "renderer.h"
 #define GL_SILENCE_DEPRECATION
-#define GLFW_INCLUDE_GLCOREARB   // 让 GLFW 包含 Core Profile 头文件（有 VAO 等）
+#define GLFW_INCLUDE_GLCOREARB   //  translated comment
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -9,7 +9,7 @@
 #include <cmath>
 #include <vector>
 
-// ── Shader源码（内嵌，不需要外部文件）────────────────────────────────────────
+// ── Shader translated comment
 
 static const char* VERT_SRC = R"(
 #version 330 core
@@ -34,7 +34,7 @@ void main() {
 }
 )";
 
-// ── 着色器编译工具 ─────────────────────────────────────────────────────────────
+// ──  translated comment
 
 static unsigned int compile_shader(unsigned int type, const char* src) {
     unsigned int id = glCreateShader(type);
@@ -123,7 +123,7 @@ void Renderer::begin_frame() {
 }
 
 void Renderer::end_frame() {
-    // 交换缓冲由main负责（glfwSwapBuffers）
+    //  translated comment
 }
 
 void Renderer::draw_mesh(const WireMesh& mesh,
@@ -185,7 +185,7 @@ void Renderer::draw_mesh_scaled(const WireMesh& mesh,
 }
 
 void Renderer::draw_axes(float length) {
-    // X轴红、Y轴绿、Z轴蓝
+    // X translated comment
     struct AxisLine { glm::vec3 a, b; glm::vec3 color; };
     AxisLine axes[] = {
         {{0,0,0},{length,0,0},{1,0,0}},
@@ -285,7 +285,7 @@ void Renderer::draw_radar(const glm::vec3& player_pos,
     const glm::vec2 center(112.0f, 112.0f);
     const float r_px = 82.0f;
     const int seg = 56;
-    const float sector_half = glm::radians(60.0f); // 前向120度
+    const float sector_half = glm::radians(60.0f); //  translated comment
     const float arc_start = glm::half_pi<float>() - sector_half;
     const float arc_end = glm::half_pi<float>() + sector_half;
 
@@ -293,7 +293,7 @@ void Renderer::draw_radar(const glm::vec3& player_pos,
     if (glm::length(fwd2) < 1e-3f) fwd2 = glm::vec2(0.0f, 1.0f);
     else fwd2 = glm::normalize(fwd2);
     float fwd_ang = std::atan2(fwd2.y, fwd2.x);
-    float rot = glm::half_pi<float>() - fwd_ang; // 玩家前向 -> 雷达上方
+    float rot = glm::half_pi<float>() - fwd_ang; //  translated comment
 
     std::vector<glm::vec3> ring;
     ring.reserve(seg * 2 + 12);
@@ -311,7 +311,7 @@ void Renderer::draw_radar(const glm::vec3& player_pos,
     ring.push_back(glm::vec3(center.x + std::cos(arc_end) * r_px, center.y + std::sin(arc_end) * r_px, 0.0f));
     draw_lines(ring, glm::vec3(0.11f, 0.28f, 0.15f));
 
-    // 同心距离环（扇区内）
+    //  translated comment
     for (int k = 1; k <= 3; ++k) {
         float rr = r_px * (k / 4.0f);
         std::vector<glm::vec3> rr_lines;
@@ -345,7 +345,7 @@ void Renderer::draw_radar(const glm::vec3& player_pos,
     }
     draw_lines(spokes, glm::vec3(0.08f, 0.18f, 0.10f));
 
-    // N/E/S/W 标记（线段字形）
+    // N/E/S/W  translated comment
     auto add_letter_n = [&](float cx, float cy, float s, std::vector<glm::vec3>& out) {
         out.insert(out.end(), {{cx - s, cy - s, 0}, {cx - s, cy + s, 0},
                                {cx - s, cy + s, 0}, {cx + s, cy - s, 0},
@@ -370,11 +370,11 @@ void Renderer::draw_radar(const glm::vec3& player_pos,
     add_letter_w(center.x + std::cos(arc_end) * (r_px + 13.0f), center.y + std::sin(arc_end) * (r_px + 13.0f), ls, labels);
     draw_lines(labels, glm::vec3(0.34f, 0.78f, 0.36f));
 
-    // 扇区内扫描线（往返摆扫）
+    //  translated comment
     float phase = std::fmod((float)glfwGetTime() * 0.9f, 1.0f);
     float tri = 1.0f - std::abs(phase * 2.0f - 1.0f);
     float scan_angle = glm::mix(arc_start, arc_end, tri);
-    // 扫描扇区余辉
+    //  translated comment
     for (int i = 0; i < 18; ++i) {
         float a0 = scan_angle - i * 0.05f;
         float a1 = scan_angle - (i + 1) * 0.05f;
@@ -435,7 +435,7 @@ void Renderer::draw_radar(const glm::vec3& player_pos,
         out.push_back(glm::vec3(p.x - s, p.y + s, 0.0f));
         out.push_back(glm::vec3(p.x + s, p.y - s, 0.0f));
 
-        // 目标运动矢量尾迹（相对运动）
+        //  translated comment
         glm::vec2 vr(0.0f);
         if (i < enemy_velocities.size()) {
             glm::vec3 vrel3 = enemy_velocities[i] - player_velocity;
@@ -464,7 +464,7 @@ void Renderer::draw_radar(const glm::vec3& player_pos,
         draw_lines(blips_hot, glm::vec3(0.82f + 0.18f * pulse, 0.86f + 0.14f * pulse, 0.22f + 0.22f * pulse));
     }
 
-    // 最近目标锁定框
+    //  translated comment
     if (has_nearest) {
         float b = 8.5f;
         float c = 3.8f;
@@ -491,7 +491,7 @@ void Renderer::draw_radar(const glm::vec3& player_pos,
     };
     draw_lines(player_marker, glm::vec3(0.08f, 0.42f, 0.12f));
 
-    // 航向指示（扇区中心）
+    //  translated comment
     std::vector<glm::vec3> heading = {
         {center.x, center.y + r_px + 4.0f, 0.0f},
         {center.x - 4.5f, center.y + r_px - 2.0f, 0.0f},
@@ -534,7 +534,7 @@ void Renderer::draw_attitude_gauge(const glm::vec3& euler_deg) {
     const float roll = euler_deg.z;  // deg
     const float roll_rad = glm::radians(roll);
 
-    // 外圈
+    //  translated comment
     std::vector<glm::vec3> rim;
     rim.reserve(seg * 2);
     for (int i = 0; i < seg; ++i) {
@@ -545,7 +545,7 @@ void Renderer::draw_attitude_gauge(const glm::vec3& euler_deg) {
     }
     draw_lines(rim, {0.14f, 0.22f, 0.15f});
 
-    // 机体固定符号
+    //  translated comment
     std::vector<glm::vec3> aircraft = {
         {c.x - 24.0f, c.y, 0.0f}, {c.x - 7.0f, c.y, 0.0f},
         {c.x + 24.0f, c.y, 0.0f}, {c.x + 7.0f, c.y, 0.0f},
@@ -554,7 +554,7 @@ void Renderer::draw_attitude_gauge(const glm::vec3& euler_deg) {
     };
     draw_lines(aircraft, {0.92f, 0.92f, 0.80f});
 
-    // 地平线（滚转旋转，俯仰平移）
+    //  translated comment
     float pitch_px = glm::clamp(pitch, -25.0f, 25.0f) * 1.8f;
     glm::vec2 n(std::cos(roll_rad), std::sin(roll_rad));
     glm::vec2 t(-n.y, n.x);
@@ -567,7 +567,7 @@ void Renderer::draw_attitude_gauge(const glm::vec3& euler_deg) {
     };
     draw_lines(horizon, {0.30f, 0.82f, 0.32f});
 
-    // 俯仰刻度（每5度）
+    //  translated comment
     std::vector<glm::vec3> pitch_marks;
     for (int deg = -20; deg <= 20; deg += 5) {
         if (deg == 0) continue;
@@ -579,7 +579,7 @@ void Renderer::draw_attitude_gauge(const glm::vec3& euler_deg) {
     }
     draw_lines(pitch_marks, {0.24f, 0.56f, 0.24f});
 
-    // 顶部滚转刻度指针
+    //  translated comment
     std::vector<glm::vec3> pointer = {
         {c.x, c.y + r - 3.0f, 0.0f},
         {c.x - 4.0f, c.y + r - 10.0f, 0.0f},
@@ -594,24 +594,24 @@ void Renderer::draw_attitude_gauge(const glm::vec3& euler_deg) {
     glUniformMatrix4fv(glGetUniformLocation(shader_program_, "projection"), 1, GL_FALSE, glm::value_ptr(projection_));
 }
 
-// ── 战斗机线框模型 ────────────────────────────────────────────────────────────
-// 坐标约定：机头朝-Z，机翼沿X，机腹朝-Y
+// ──  translated comment
+//  translated comment
 
 WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {
     WireMesh m;
     gear_deploy = glm::clamp(gear_deploy, 0.0f, 1.0f);
     flap_deploy = glm::clamp(flap_deploy, 0.0f, 1.0f);
-    // 简约客机风格：圆润机身 + 基本翼面，减少线条但保留体积感
+    //  translated comment
     const std::vector<float> zs = {-6.8f, -4.2f, -1.2f, 2.0f, 5.2f};
     const std::vector<float> rx = {0.12f, 0.90f, 1.05f, 0.85f, 0.45f};
     const std::vector<float> ry = {0.12f, 0.95f, 1.08f, 0.90f, 0.50f};
     const int ring_pts = 8;
 
-    // 机头与机尾尖点
+    //  translated comment
     m.vertices.push_back({0.0f, 0.0f, -7.5f}); // 0 nose
     m.vertices.push_back({0.0f, 0.0f,  6.2f}); // 1 tail
 
-    // 椭圆截面环
+    //  translated comment
     const int ring_start = (int)m.vertices.size();
     for (size_t r = 0; r < zs.size(); ++r) {
         for (int i = 0; i < ring_pts; ++i) {
@@ -626,7 +626,7 @@ WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {
 
     auto ring_idx = [&](int r, int i) { return ring_start + r * ring_pts + (i % ring_pts); };
 
-    // 每个截面闭环
+    //  translated comment
     for (int r = 0; r < (int)zs.size(); ++r) {
         for (int i = 0; i < ring_pts; ++i) {
             m.line_indices.push_back(ring_idx(r, i));
@@ -634,7 +634,7 @@ WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {
         }
     }
 
-    // 环与环之间连接，形成圆润“球体感”骨架
+    //  translated comment
     for (int r = 0; r < (int)zs.size() - 1; ++r) {
         for (int i = 0; i < ring_pts; ++i) {
             m.line_indices.push_back(ring_idx(r, i));
@@ -642,7 +642,7 @@ WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {
         }
     }
 
-    // 机头/机尾与最近截面连接
+    //  translated comment
     for (int i = 0; i < ring_pts; ++i) {
         m.line_indices.push_back(0);
         m.line_indices.push_back(ring_idx(0, i));
@@ -650,7 +650,7 @@ WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {
         m.line_indices.push_back(ring_idx((int)zs.size() - 1, i));
     }
 
-    // 简化机翼
+    //  translated comment
     const unsigned int wing_root_l = (unsigned int)m.vertices.size(); m.vertices.push_back({-0.9f, -0.05f, -0.6f});
     const unsigned int wing_root_r = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.9f, -0.05f, -0.6f});
     const unsigned int wing_tip_l  = (unsigned int)m.vertices.size(); m.vertices.push_back({-4.2f, -0.12f,  0.9f});
@@ -664,7 +664,7 @@ WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {
         wing_root_l, wing_root_r
     });
 
-    // 简化平尾 + 垂尾
+    //  translated comment
     const unsigned int tail_l = (unsigned int)m.vertices.size(); m.vertices.push_back({-1.9f, 0.06f, 5.0f});
     const unsigned int tail_r = (unsigned int)m.vertices.size(); m.vertices.push_back({ 1.9f, 0.06f, 5.0f});
     const unsigned int tail_c = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.0f, 0.08f, 4.6f});
@@ -675,7 +675,7 @@ WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {
         tail_c, fin_t
     });
 
-    // 起落架细节（可收放）
+    //  translated comment
     if (gear_deploy > 0.001f) {
         float gy = -0.30f - 0.92f * gear_deploy;
         float gz_front = -4.55f + 0.40f * (1.0f - gear_deploy);
@@ -703,7 +703,7 @@ WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {
         });
     }
 
-    // 襟翼细节（主翼后缘内外段，可收放）
+    //  translated comment
     {
         float fdy = -0.06f - 0.22f * flap_deploy;
         float fdz = 0.04f + 0.20f * flap_deploy;
@@ -726,36 +726,36 @@ WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {
 }
 
 WireMesh make_fighter_mesh() {
-    return make_fighter_mesh_variant(0.0f, 0.0f); // 巡航状态：收轮/收襟翼
+    return make_fighter_mesh_variant(0.0f, 0.0f); //  translated comment
 }
 
 WireMesh make_carrier_mesh() {
     WireMesh m;
-    // 简约企业号风格航母（甲板、舰岛、舰艏上翘）
+    //  translated comment
     m.vertices = {
-        {-38.0f, 0.0f,  96.0f}, { 38.0f, 0.0f,  96.0f}, // 0 1 艉
-        {-46.0f, 0.0f, -98.0f}, { 46.0f, 0.0f, -98.0f}, // 2 3 艏
-        {-34.0f, 8.0f,  92.0f}, { 34.0f, 8.0f,  92.0f}, // 4 5 甲板后
-        {-42.0f, 8.0f, -90.0f}, { 42.0f, 8.0f, -90.0f}, // 6 7 甲板前
-        { 18.0f, 8.0f,  28.0f}, { 28.0f, 8.0f,  28.0f}, // 8 9 舰岛底
+        {-38.0f, 0.0f,  96.0f}, { 38.0f, 0.0f,  96.0f}, // 0 1  translated comment
+        {-46.0f, 0.0f, -98.0f}, { 46.0f, 0.0f, -98.0f}, // 2 3  translated comment
+        {-34.0f, 8.0f,  92.0f}, { 34.0f, 8.0f,  92.0f}, // 4 5  translated comment
+        {-42.0f, 8.0f, -90.0f}, { 42.0f, 8.0f, -90.0f}, // 6 7  translated comment
+        { 18.0f, 8.0f,  28.0f}, { 28.0f, 8.0f,  28.0f}, // 8 9  translated comment
         { 18.0f, 8.0f,   6.0f}, { 28.0f, 8.0f,   6.0f}, // 10 11
-        { 20.0f, 24.0f, 22.0f}, { 28.0f, 24.0f, 22.0f}, // 12 13 舰岛顶
+        { 20.0f, 24.0f, 22.0f}, { 28.0f, 24.0f, 22.0f}, // 12 13  translated comment
         { 20.0f, 24.0f, 10.0f}, { 28.0f, 24.0f, 10.0f}, // 14 15
-        { 24.0f, 32.0f, 16.0f}, // 16 桅杆
-        {-42.0f, 8.0f, -90.0f}, { 0.0f, 14.0f, -110.0f}, {42.0f, 8.0f, -90.0f}, // 17 18 19 艏上翘
+        { 24.0f, 32.0f, 16.0f}, // 16  translated comment
+        {-42.0f, 8.0f, -90.0f}, { 0.0f, 14.0f, -110.0f}, {42.0f, 8.0f, -90.0f}, // 17 18 19  translated comment
     };
     m.line_indices = {
-        0,1, 1,3, 3,2, 2,0, // 船体底
-        4,5, 5,7, 7,6, 6,4, // 甲板
-        0,4, 1,5, 2,6, 3,7, // 侧舷
-        4,6, 5,7, // 甲板纵线
+        0,1, 1,3, 3,2, 2,0, //  translated comment
+        4,5, 5,7, 7,6, 6,4, //  translated comment
+        0,4, 1,5, 2,6, 3,7, //  translated comment
+        4,6, 5,7, //  translated comment
 
-        8,9, 9,11, 11,10, 10,8, // 舰岛底
-        12,13, 13,15, 15,14, 14,12, // 舰岛顶
-        8,12, 9,13, 10,14, 11,15, // 舰岛立柱
-        12,16, 13,16, 14,16, 15,16, // 桅杆
+        8,9, 9,11, 11,10, 10,8, //  translated comment
+        12,13, 13,15, 15,14, 14,12, //  translated comment
+        8,12, 9,13, 10,14, 11,15, //  translated comment
+        12,16, 13,16, 14,16, 15,16, //  translated comment
 
-        17,18, 18,19 // 艏部跳板线
+        17,18, 18,19 //  translated comment
     };
     return m;
 }

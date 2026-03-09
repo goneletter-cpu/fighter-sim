@@ -19,7 +19,7 @@ ControlInput FlightController::update(const AircraftState& state,
     glm::vec3 up      = glm::normalize(world_from_body * glm::vec3(0, 1, 0));
     const glm::vec3 world_up(0.0f, 1.0f, 0.0f);
 
-    // 用机头/机体上方向计算连续银行角，避免欧拉角在翻转附近跳变
+    //  translated comment
     glm::vec3 right_ref = glm::cross(world_up, forward);
     if (glm::length(right_ref) < 1e-4f) {
         right_ref = glm::cross(glm::vec3(1, 0, 0), forward);
@@ -36,7 +36,7 @@ ControlInput FlightController::update(const AircraftState& state,
     ctrl.rudder   = yaw_pid  .update(cmd.yaw_rate_rad_s, state.angular_vel.y, dt);
     ctrl.throttle = cmd.throttle;
 
-    // 防倒飞保护：机体上方向朝下时，额外施加回正副翼
+    //  translated comment
     if (up.y < 0.0f) {
         float recover = glm::clamp(-up.y, 0.0f, 1.0f);
         ctrl.aileron += glm::clamp(-roll * 0.55f * recover, -0.35f, 0.35f);
