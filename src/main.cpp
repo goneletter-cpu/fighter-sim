@@ -378,6 +378,22 @@ static WireMesh make_explosion_mesh() {
     return m;
 }
 
+static WireMesh make_roundel_mesh() {
+    WireMesh m;
+    const int seg = 28;
+    const float r = 1.0f;
+    for (int i = 0; i < seg; ++i) {
+        float t = (2.0f * glm::pi<float>() * i) / seg;
+        m.vertices.push_back({std::cos(t) * r, 0.0f, std::sin(t) * r});
+    }
+    for (int i = 0; i < seg; ++i) {
+        int j = (i + 1) % seg;
+        m.line_indices.push_back((unsigned int)i);
+        m.line_indices.push_back((unsigned int)j);
+    }
+    return m;
+}
+
 static glm::quat orientation_from_forward(const glm::vec3& forward_world) {
     glm::vec3 f = glm::normalize(forward_world);
     glm::vec3 up_ref(0.0f, 1.0f, 0.0f);
@@ -936,6 +952,12 @@ int main() {
     WireMesh bullet_mesh = make_bullet_mesh();
     WireMesh cloud_mesh = make_cloud_mesh();
     WireMesh explosion_mesh = make_explosion_mesh();
+    WireMesh roundel_mesh = make_roundel_mesh();
+    const float player_model_scale = 1.42f;
+    const float enemy_model_scale = 1.42f;
+    const glm::vec3 player_usn_base(0.18f, 0.28f, 0.56f);   // WWII USN night sea blue (boosted visibility)
+    const glm::vec3 player_usn_roundel_blue(0.12f, 0.24f, 0.50f);
+    const glm::vec3 player_usn_roundel_white(0.94f, 0.94f, 0.92f);
 
     //  translated comment
     AircraftState state;
@@ -1038,7 +1060,8 @@ int main() {
             renderer.draw_ground_grid(3200.0f, 120.0f, carrier_pos.y - 8.0f);
             renderer.draw_mesh(carrier_mesh, carrier_pos, glm::quat(1, 0, 0, 0), {0.12f, 0.13f, 0.15f});
             renderer.draw_mesh(carrier_marks_mesh, carrier_pos, glm::quat(1, 0, 0, 0), {0.92f, 0.92f, 0.92f});
-            renderer.draw_mesh(intro_fighter_mesh, state.position, state.orientation, {0.08f, 0.10f, 0.14f});
+            renderer.draw_mesh_scaled(intro_fighter_mesh, state.position, state.orientation,
+                                      player_model_scale, player_usn_base);
             renderer.end_frame();
             glfwSwapBuffers(window);
 
@@ -1174,17 +1197,39 @@ int main() {
         for (const auto& c : clouds) {
             renderer.draw_mesh(cloud_mesh, c.position, glm::quat(1, 0, 0, 0), {0.86f, 0.88f, 0.91f});
         }
-        renderer.draw_mesh(fighter_mesh, state.position, state.orientation,
-                           {0.08f, 0.10f, 0.14f});   //  translated comment
-        for (const auto& e : enemies) {
-            renderer.draw_mesh(fighter_mesh, e.position, e.orientation, {0.72f, 0.12f, 0.10f});
+        glLineWidth(3.0f);
+        renderer.draw_mesh_scaled(fighter_mesh, state.position, state.orientation,
+                                  player_model_scale, player_usn_base);   //  translated comment
+        {
+            glm::mat3 pb = glm::mat3_cast(state.orientation);
+            glm::vec3 pl = state.position + pb * glm::vec3(-2.65f * player_model_scale, 0.22f * player_model_scale, 0.20f * player_model_scale);
+            glm::vec3 pr = state.position + pb * glm::vec3( 2.65f * player_model_scale, 0.22f * player_model_scale, 0.20f * player_model_scale);
+            float usn_outer = 0.60f * player_model_scale;
+            float usn_inner = 0.34f * player_model_scale;
+            renderer.draw_mesh_scaled(roundel_mesh, pl, state.orientation, usn_outer, player_usn_roundel_blue);
+            renderer.draw_mesh_scaled(roundel_mesh, pr, state.orientation, usn_outer, player_usn_roundel_blue);
+            renderer.draw_mesh_scaled(roundel_mesh, pl, state.orientation, usn_inner, player_usn_roundel_white);
+            renderer.draw_mesh_scaled(roundel_mesh, pr, state.orientation, usn_inner, player_usn_roundel_white);
         }
+        for (const auto& e : enemies) {
+            // IJN late-1930s/WWII style: aged ame-iro base + red roundels.
+            renderer.draw_mesh_scaled(fighter_mesh, e.position, e.orientation,
+                                      enemy_model_scale, {0.52f, 0.50f, 0.38f});
+
+            glm::mat3 eb = glm::mat3_cast(e.orientation);
+            glm::vec3 el = e.position + eb * glm::vec3(-2.65f * enemy_model_scale, 0.22f * enemy_model_scale, 0.20f * enemy_model_scale);
+            glm::vec3 er = e.position + eb * glm::vec3( 2.65f * enemy_model_scale, 0.22f * enemy_model_scale, 0.20f * enemy_model_scale);
+            float roundel_scale = 0.56f * enemy_model_scale;
+            renderer.draw_mesh_scaled(roundel_mesh, el, e.orientation, roundel_scale, {0.84f, 0.10f, 0.09f});
+            renderer.draw_mesh_scaled(roundel_mesh, er, e.orientation, roundel_scale, {0.84f, 0.10f, 0.09f});
+        }
+        glLineWidth(1.5f);
         const glm::quat identity_q(1.0f, 0.0f, 0.0f, 0.0f);
         for (const auto& b : bombs) {
             renderer.draw_mesh(bomb_mesh, b.position, identity_q, {0.78f, 0.10f, 0.08f});
         }
         for (const auto& p : bullets) {
-            renderer.draw_mesh(bullet_mesh, p.position, identity_q, {0.08f, 0.08f, 0.08f});
+            renderer.draw_mesh(bullet_mesh, p.position, identity_q, {0.92f, 0.12f, 0.10f});
         }
         for (const auto& s : aa_shells) {
             renderer.draw_mesh(bullet_mesh, s.position, identity_q, {0.78f, 0.18f, 0.10f});
