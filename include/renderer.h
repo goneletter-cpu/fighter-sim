@@ -43,6 +43,7 @@ public:
                   const glm::vec3& velocity,
                   const glm::vec3& angular_vel_deg_s,
                   float throttle,
+                  float game_speed_scale,
                   float aoa_deg,
                   float beta_deg);
     void draw_radar(const glm::vec3& player_pos,
@@ -50,7 +51,9 @@ public:
                     const std::vector<glm::vec3>& enemy_velocities,
                     const glm::vec3& player_velocity,
                     float radar_range_world = 1200.0f);
-    void draw_attitude_gauge(const glm::vec3& euler_deg);
+    void draw_attitude_gauge(const glm::vec3& euler_deg,
+                             float airspeed_mps,
+                             float game_speed_scale);
 
     //  translated comment
     void set_camera(const glm::vec3& eye,

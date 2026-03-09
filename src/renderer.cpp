@@ -241,16 +241,17 @@ void Renderer::draw_hud(const glm::vec3& euler_deg,
                          const glm::vec3& velocity,
                          const glm::vec3& angular_vel_deg_s,
                          float throttle,
+                         float game_speed_scale,
                          float aoa_deg,
                          float beta_deg)
 {
     float airspeed = glm::length(velocity);
-    printf("\rP:%6.1f R:%6.1f Y:%6.1f deg | Alt:%8.1fm V:%6.1fm/s Vy:%6.1fm/s | AoA:%6.1f Beta:%6.1f deg | p:%6.1f q:%6.1f r:%6.1f deg/s | Thr:%5.1f%% | Pos:(%7.1f,%7.1f,%7.1f)   ",
+    printf("\rP:%6.1f R:%6.1f Y:%6.1f deg | Alt:%8.1fm V:%6.1fm/s Vy:%6.1fm/s | AoA:%6.1f Beta:%6.1f deg | p:%6.1f q:%6.1f r:%6.1f deg/s | Thr:%5.1f%% GS:%5.1f%% | Pos:(%7.1f,%7.1f,%7.1f)   ",
            euler_deg.x, euler_deg.z, euler_deg.y,
            position.y, airspeed, velocity.y,
            aoa_deg, beta_deg,
            angular_vel_deg_s.x, angular_vel_deg_s.y, angular_vel_deg_s.z,
-           throttle * 100.0f,
+           throttle * 100.0f, game_speed_scale * 100.0f,
            position.x, position.y, position.z);
     fflush(stdout);
 }
@@ -506,7 +507,9 @@ void Renderer::draw_radar(const glm::vec3& player_pos,
     glUniformMatrix4fv(glGetUniformLocation(shader_program_, "projection"), 1, GL_FALSE, glm::value_ptr(projection_));
 }
 
-void Renderer::draw_attitude_gauge(const glm::vec3& euler_deg) {
+void Renderer::draw_attitude_gauge(const glm::vec3& euler_deg,
+                                   float airspeed_mps,
+                                   float game_speed_scale) {
     glm::mat4 saved_view = view_;
     glm::mat4 saved_proj = projection_;
 
@@ -587,6 +590,59 @@ void Renderer::draw_attitude_gauge(const glm::vec3& euler_deg) {
         {c.x + 4.0f, c.y + r - 10.0f, 0.0f}
     };
     draw_lines(pointer, {0.88f, 0.88f, 0.30f});
+
+    // Vertical airspeed tape next to the attitude gauge.
+    const float speed_min = 0.0f;
+    const float speed_max = 260.0f;
+    const float tape_h = 136.0f;
+    const float tape_half_h = tape_h * 0.5f;
+    const float tape_x = c.x - r - 34.0f;
+    const float tape_w = 14.0f;
+    const float y0 = c.y - tape_half_h;
+    const float y1 = c.y + tape_half_h;
+
+    std::vector<glm::vec3> tape_frame = {
+        {tape_x, y0, 0.0f}, {tape_x + tape_w, y0, 0.0f},
+        {tape_x + tape_w, y0, 0.0f}, {tape_x + tape_w, y1, 0.0f},
+        {tape_x + tape_w, y1, 0.0f}, {tape_x, y1, 0.0f},
+        {tape_x, y1, 0.0f}, {tape_x, y0, 0.0f}
+    };
+    draw_lines(tape_frame, {0.14f, 0.22f, 0.15f});
+
+    std::vector<glm::vec3> speed_ticks;
+    for (int s = 0; s <= (int)speed_max; s += 20) {
+        float t = ((float)s - speed_min) / (speed_max - speed_min);
+        float y = y0 + t * tape_h;
+        float tick_len = (s % 40 == 0) ? 9.0f : 5.0f;
+        speed_ticks.push_back({tape_x - tick_len, y, 0.0f});
+        speed_ticks.push_back({tape_x, y, 0.0f});
+    }
+    draw_lines(speed_ticks, {0.24f, 0.56f, 0.24f});
+
+    float sp = glm::clamp(airspeed_mps, speed_min, speed_max);
+    float sp_t = (sp - speed_min) / (speed_max - speed_min);
+    float sp_y = y0 + sp_t * tape_h;
+    std::vector<glm::vec3> speed_marker = {
+        {tape_x - 2.0f, sp_y, 0.0f}, {tape_x - 14.0f, sp_y, 0.0f},
+        {tape_x - 14.0f, sp_y, 0.0f}, {tape_x - 10.0f, sp_y + 4.0f, 0.0f},
+        {tape_x - 14.0f, sp_y, 0.0f}, {tape_x - 10.0f, sp_y - 4.0f, 0.0f}
+    };
+    draw_lines(speed_marker, {0.96f, 0.42f, 0.10f});
+
+    // Small GS bar under the speed tape (70%..160%).
+    const float gs_min = 0.70f;
+    const float gs_max = 1.60f;
+    const float gs_y = y0 - 18.0f;
+    std::vector<glm::vec3> gs_base = {
+        {tape_x, gs_y, 0.0f}, {tape_x + tape_w, gs_y, 0.0f}
+    };
+    draw_lines(gs_base, {0.14f, 0.22f, 0.15f});
+    float gs_t = (glm::clamp(game_speed_scale, gs_min, gs_max) - gs_min) / (gs_max - gs_min);
+    float gs_x = tape_x + gs_t * tape_w;
+    std::vector<glm::vec3> gs_marker = {
+        {gs_x, gs_y - 4.0f, 0.0f}, {gs_x, gs_y + 4.0f, 0.0f}
+    };
+    draw_lines(gs_marker, {0.88f, 0.88f, 0.30f});
 
     view_ = saved_view;
     projection_ = saved_proj;

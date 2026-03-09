@@ -5,13 +5,13 @@ echo "=== Fighter Sim Build ==="
 
 # translated comment
 if ! command -v brew &>/dev/null; then
-    echo "[错误] 没有找到 Homebrew。请先安装："
+    echo "[Error] Homebrew not found. Please install it first:"
     echo "  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
     exit 1
 fi
 
 # translated comment
-echo "[1/3] 检查依赖..."
+echo "[1/3] Checking dependencies..."
 brew list glfw &>/dev/null || brew install glfw
 brew list glm  &>/dev/null || brew install glm
 
@@ -23,7 +23,7 @@ INCLUDES="-I include -I${GLFW_PREFIX}/include -I${GLM_PREFIX}/include"
 LIBS="-L${GLFW_PREFIX}/lib -lglfw -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo"
 
 # translated comment
-echo "[2/3] 编译..."
+echo "[2/3] Building..."
 mkdir -p build
 
 clang++ -std=c++17 -O2 -Wall \
@@ -36,14 +36,14 @@ clang++ -std=c++17 -O2 -Wall \
     $LIBS \
     -o build/fighter_sim
 
-echo "[3/3] 完成！"
+echo "[3/3] Done!"
 echo ""
-echo "运行方式："
+echo "Run:"
 echo "  ./build/fighter_sim"
 echo ""
-echo "操控："
-echo "  W/S    = 俯仰"
-echo "  A/D    = 滚转"
-echo "  Q/E    = 偏航"
-echo "  Shift/Ctrl = 油门"
-echo "  ESC    = 退出"
+echo "Controls:"
+echo "  W/S    = climb / dive"
+echo "  A/D    = bank / diagonal assist"
+echo "  Q/E    = strafe left / right"
+echo "  Shift/Ctrl = game speed +/-"
+echo "  ESC    = quit"

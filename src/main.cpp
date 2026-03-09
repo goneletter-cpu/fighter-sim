@@ -30,8 +30,8 @@ struct KeyState {
     bool roll_right = false;
     bool yaw_left   = false;
     bool yaw_right  = false;
-    bool throttle_up   = false;
-    bool throttle_down = false;
+    bool speed_up   = false;
+    bool speed_down = false;
     bool fire_held = false;
     bool fire_released = false;
     double fire_press_time = 0.0;
@@ -40,6 +40,7 @@ struct KeyState {
 
 static KeyState g_keys;
 static int g_motion_quadrant = 1;
+static float g_game_speed_scale = 1.0f;
 
 static float slew_to(float current, float target, float max_step) {
     float delta = glm::clamp(target - current, -max_step, max_step);
@@ -122,8 +123,10 @@ static void key_callback(GLFWwindow* win, int key, int, int action, int) {
         case GLFW_KEY_D:         g_keys.roll_right    = pressed; break;
         case GLFW_KEY_Q:         g_keys.yaw_left      = pressed; break;
         case GLFW_KEY_E:         g_keys.yaw_right     = pressed; break;
-        case GLFW_KEY_LEFT_SHIFT:  g_keys.throttle_up   = pressed; break;
-        case GLFW_KEY_LEFT_CONTROL:g_keys.throttle_down = pressed; break;
+        case GLFW_KEY_LEFT_SHIFT:
+        case GLFW_KEY_RIGHT_SHIFT:   g_keys.speed_up   = pressed; break;
+        case GLFW_KEY_LEFT_CONTROL:
+        case GLFW_KEY_RIGHT_CONTROL: g_keys.speed_down = pressed; break;
         case GLFW_KEY_SPACE:
             if (action == GLFW_PRESS) {
                 g_keys.fire_held = true;
@@ -148,7 +151,6 @@ static void apply_player_intervention(AttitudeCommand& cmd,
     const float PITCH_DELTA = glm::radians(6.0f);   // rad/s
     const float ROLL_DELTA  = glm::radians(10.0f);
     const float YAW_DELTA   = glm::radians(5.0f);
-    const float THR_DELTA   = 0.06f;
 
     if (g_keys.pitch_up)    cmd.pitch_rad += PITCH_DELTA * dt;
     if (g_keys.pitch_down)  cmd.pitch_rad -= PITCH_DELTA * dt;
@@ -156,8 +158,6 @@ static void apply_player_intervention(AttitudeCommand& cmd,
     if (g_keys.roll_right)  cmd.roll_rad  -= ROLL_DELTA  * dt;
     if (g_keys.yaw_left)    cmd.yaw_rate_rad_s += YAW_DELTA * dt;
     if (g_keys.yaw_right)   cmd.yaw_rate_rad_s -= YAW_DELTA * dt;
-    if (g_keys.throttle_up)   cmd.throttle += THR_DELTA * dt;
-    if (g_keys.throttle_down) cmd.throttle -= THR_DELTA * dt;
 
     //  translated comment
     if (!g_keys.pitch_up && !g_keys.pitch_down) {
@@ -174,6 +174,16 @@ static void apply_player_intervention(AttitudeCommand& cmd,
     cmd.roll_rad  = glm::clamp(cmd.roll_rad,  glm::radians(-50.0f), glm::radians(50.0f));
     cmd.yaw_rate_rad_s = glm::clamp(cmd.yaw_rate_rad_s, glm::radians(-16.0f), glm::radians(16.0f));
     cmd.throttle  = glm::clamp(cmd.throttle, 0.0f, 1.0f);
+}
+
+static void update_game_speed_scale(float dt) {
+    const float kMinScale = 0.70f;
+    const float kMaxScale = 1.60f;
+    const float kAdjustPerSec = 0.45f;
+    float dir = 0.0f;
+    if (g_keys.speed_up) dir += 1.0f;
+    if (g_keys.speed_down) dir -= 1.0f;
+    g_game_speed_scale = glm::clamp(g_game_speed_scale + dir * kAdjustPerSec * dt, kMinScale, kMaxScale);
 }
 
 //  translated comment
@@ -382,7 +392,8 @@ static glm::quat orientation_from_forward(const glm::vec3& forward_world) {
 static void respawn_enemy(EnemyAircraft& enemy,
                           const AircraftState& player,
                           int idx,
-                          float t_now) {
+                          float t_now,
+                          float game_speed_scale) {
     glm::mat3 world_from_body = glm::mat3_cast(player.orientation);
     glm::vec3 fwd = glm::normalize(world_from_body * glm::vec3(0, 0, -1));
     glm::vec3 right = glm::normalize(world_from_body * glm::vec3(1, 0, 0));
@@ -405,7 +416,7 @@ static void respawn_enemy(EnemyAircraft& enemy,
     enemy.position.y = glm::clamp(enemy.position.y, 240.0f, 1880.0f);
 
     glm::vec3 dir_to_player = glm::normalize(player.position - enemy.position);
-    enemy.velocity = dir_to_player * (58.0f + 4.0f * (idx % 3));
+    enemy.velocity = dir_to_player * (58.0f + 4.0f * (idx % 3)) * game_speed_scale;
     enemy.orientation = orientation_from_forward(enemy.velocity);
 }
 
@@ -485,9 +496,9 @@ static void apply_side_scroller_motion(AircraftState& state, float dt) {
     else if (qx < 0.0f && qy < 0.0f) g_motion_quadrant = 3;
     else g_motion_quadrant = 4;
 
-    const float scroll_speed = 128.0f;
-    const float side_speed = 88.0f;
-    const float vertical_speed = 74.0f;
+    const float scroll_speed = 128.0f * g_game_speed_scale;
+    const float side_speed = 88.0f * g_game_speed_scale;
+    const float vertical_speed = 74.0f * g_game_speed_scale;
 
     float target_vx = input_x * side_speed;
     float target_vy = input_y * vertical_speed;
@@ -517,10 +528,20 @@ static void apply_side_scroller_motion(AircraftState& state, float dt) {
 static void update_enemies(std::vector<EnemyAircraft>& enemies,
                            const AircraftState& player,
                            float dt,
-                           float t_now) {
+                           float t_now,
+                           float game_speed_scale) {
     glm::vec3 player_fwd = glm::normalize(glm::mat3_cast(player.orientation) * glm::vec3(0, 0, -1));
     for (size_t i = 0; i < enemies.size(); ++i) {
         EnemyAircraft& e = enemies[i];
+        float desired_speed = (58.0f + 4.0f * (i % 3)) * game_speed_scale;
+        float v_len = glm::length(e.velocity);
+        if (v_len > 1e-4f) {
+            e.velocity = (e.velocity / v_len) * desired_speed;
+        } else {
+            glm::vec3 to_player = player.position - e.position;
+            float d = glm::length(to_player);
+            e.velocity = (d > 1e-4f) ? (to_player / d) * desired_speed : glm::vec3(0.0f, 0.0f, -desired_speed);
+        }
         e.position += e.velocity * dt;
         e.orientation = orientation_from_forward(e.velocity);
 
@@ -531,7 +552,7 @@ static void update_enemies(std::vector<EnemyAircraft>& enemies,
             e.position.x < -670.0f || e.position.x > 670.0f ||
             e.position.y < 140.0f ||
             e.position.y > player.position.y + 900.0f) {
-            respawn_enemy(e, player, (int)i, t_now);
+            respawn_enemy(e, player, (int)i, t_now, game_speed_scale);
         }
     }
 }
@@ -950,10 +971,10 @@ int main() {
     const double intro_duration_s = 8.5;
     const glm::vec3 carrier_pos(0.0f, START_POS.y - 70.0f, 220.0f);
 
-    printf("Fighter Sim 启动\n");
+    printf("Fighter Sim started\n");
     printf("OpenGL: %s\n", glGetString(GL_VERSION));
     for (size_t i = 0; i < enemies.size(); ++i) {
-        respawn_enemy(enemies[i], state, (int)i, 0.0f);
+        respawn_enemy(enemies[i], state, (int)i, 0.0f, g_game_speed_scale);
     }
     for (size_t i = 0; i < clouds.size(); ++i) {
         clouds[i].position = state.position + glm::vec3(
@@ -969,9 +990,9 @@ int main() {
         aa_batteries.push_back(b);
     }
 
-    printf("模式: 横版射击(3D表现)\n");
-    printf("开场: 航母起飞动画（企业号风格）\n");
-    printf("操控: W/S=上下移动 A/D=左右移动 Q/E=轻微偏航姿态 Shift/Ctrl=油门 Space短按=导弹(近炸引信) 长按=机枪 ESC=退出\n\n");
+    printf("Mode: side-scrolling combat (3D presentation)\n");
+    printf("Intro: carrier launch sequence (Enterprise style)\n");
+    printf("Controls: W/S=climb/dive Q/E=strafe left/right A/D=bank + diagonal maneuver assist Shift/Ctrl=game speed +/- Space=tap(release)=bomb hold=machine gun ESC=quit\n\n");
 
     // ──  translated comment
 
@@ -1036,6 +1057,8 @@ int main() {
             continue;
         }
 
+        update_game_speed_scale((float)frame_time);
+
         double hold_duration = g_keys.fire_held ? (now - g_keys.fire_press_time) : 0.0;
         bool machine_gun_mode = g_keys.fire_held && hold_duration >= hold_fire_threshold_s;
         if (g_keys.fire_released) {
@@ -1076,7 +1099,7 @@ int main() {
             accumulator -= SIM_DT;
         }
 
-        update_enemies(enemies, state, (float)frame_time, (float)now);
+        update_enemies(enemies, state, (float)frame_time, (float)now, g_game_speed_scale);
         update_clouds(clouds, state, (float)now);
 
         //  translated comment
@@ -1085,7 +1108,7 @@ int main() {
             for (size_t i = 0; i < enemies.size(); ++i) {
                 if (glm::distance(it_b->position, enemies[i].position) < 26.0f) {
                     explosions.push_back(Explosion{enemies[i].position, 0.45f, 0.45f});
-                    respawn_enemy(enemies[i], state, (int)i, (float)now);
+                    respawn_enemy(enemies[i], state, (int)i, (float)now, g_game_speed_scale);
                     score += 10;
                     hit = true;
                     break;
@@ -1100,7 +1123,7 @@ int main() {
             for (size_t i = 0; i < enemies.size(); ++i) {
                 if (glm::distance(it_m->position, enemies[i].position) < 58.0f) {
                     explosions.push_back(Explosion{enemies[i].position, 0.52f, 0.52f});
-                    respawn_enemy(enemies[i], state, (int)i, (float)now);
+                    respawn_enemy(enemies[i], state, (int)i, (float)now, g_game_speed_scale);
                     score += 20;
                     exploded = true;
                     break;
@@ -1187,7 +1210,9 @@ int main() {
             enemy_velocities.push_back(e.velocity);
         }
         renderer.draw_radar(state.position, enemy_positions, enemy_velocities, state.velocity, 720.0f);
-        renderer.draw_attitude_gauge(glm::degrees(state.euler_angles()));
+        renderer.draw_attitude_gauge(glm::degrees(state.euler_angles()),
+                                     glm::length(state.velocity),
+                                     g_game_speed_scale);
         renderer.end_frame();
 
         glfwSwapBuffers(window);
@@ -1202,13 +1227,13 @@ int main() {
         float beta_deg = glm::degrees(std::atan2(body_vel.x, forward_speed));
         glm::vec3 angular_vel_deg_s = glm::degrees(state.angular_vel);
         renderer.draw_hud(euler_deg, state.position, state.velocity, angular_vel_deg_s,
-                          command.throttle, aoa_deg, beta_deg);
+                          command.throttle, g_game_speed_scale, aoa_deg, beta_deg);
 
         char title[256];
         std::snprintf(title, sizeof(title),
-                      "Fighter Sim | GAME | Q%d | HP %d | Score %d | Alt %.0f m | V %.0f m/s | Vy %.1f m/s | AoA %.1f deg | Thr %.0f%% | Bullets %zu | Bombs %zu | AA %zu",
+                      "Fighter Sim | GAME | Q%d | HP %d | Score %d | GS %.0f%% | Alt %.0f m | V %.0f m/s | Vy %.1f m/s | AoA %.1f deg | Thr %.0f%% | Bullets %zu | Bombs %zu | AA %zu",
                       g_motion_quadrant, player_hp, score,
-                      state.position.y, glm::length(state.velocity), state.velocity.y,
+                      g_game_speed_scale * 100.0f, state.position.y, glm::length(state.velocity), state.velocity.y,
                       aoa_deg, command.throttle * 100.0f,
                       bullets.size(), bombs.size(), aa_shells.size());
         glfwSetWindowTitle(window, title);
@@ -1217,7 +1242,7 @@ int main() {
     if (crashed) {
         printf("Flight ended: crashed.\n");
     } else {
-        printf("\n再见\n");
+        printf("\nBye.\n");
     }
     glfwDestroyWindow(window);
     glfwTerminate();
