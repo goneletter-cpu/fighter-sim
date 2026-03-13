@@ -6,11 +6,15 @@
 #include <cstdio>
 #include <cmath>
 #include <algorithm>
+#include <fstream>
+#include <sstream>
+#include <filesystem>
 #include <vector>
 
 #include "physics.h"
 #include "pid.h"
 #include "flight_controller.h"
+#include "jsbsim_adapter.h"
 #include "renderer.h"
 
 // ──  translated comment
@@ -20,6 +24,9 @@ static const int   HEIGHT = 720;
 static const float SIM_DT = 1.0f / 120.0f;   //  translated comment
 static const glm::vec3 START_POS(0.0f, 1000.0f, 0.0f);
 [[maybe_unused]] static const glm::vec3 FIXED_WAYPOINT(6000.0f, 1800.0f, -8000.0f); // x/y/z translated comment
+static const bool kEnableCombat = false;
+static const bool kUseAutopilot = false;
+static const char* kScriptPath = "config/flight_script.yaml";
 
 // ──  translated comment
 
@@ -32,6 +39,10 @@ struct KeyState {
     bool yaw_right  = false;
     bool speed_up   = false;
     bool speed_down = false;
+    bool trim_up    = false;
+    bool trim_down  = false;
+    bool trim_left  = false;
+    bool trim_right = false;
     bool fire_held = false;
     bool fire_released = false;
     double fire_press_time = 0.0;
@@ -39,12 +50,52 @@ struct KeyState {
 };
 
 static KeyState g_keys;
-static int g_motion_quadrant = 1;
 static float g_game_speed_scale = 1.0f;
+static const float LOW_ALT_MIN_Y = 55.0f;
+static const float LOW_ALT_MAX_Y = 820.0f;
+static const float TRIM_WHEEL_MAX_V = 120.0f;
+static glm::vec3 g_trim_origin = START_POS;
+static glm::vec2 g_trim_wheel_vel(0.0f, 0.0f);
+static float g_throttle_cmd = 0.65f;
 
 static float slew_to(float current, float target, float max_step) {
     float delta = glm::clamp(target - current, -max_step, max_step);
     return current + delta;
+}
+
+static ControlInput build_direct_surface_controls(float dt, float throttle_cmd) {
+    float pitch = 0.0f;
+    float roll = 0.0f;
+    float yaw = 0.0f;
+    if (g_keys.pitch_up)   pitch += 1.0f;
+    if (g_keys.pitch_down) pitch -= 1.0f;
+    if (g_keys.roll_right) roll += 1.0f;
+    if (g_keys.roll_left)  roll -= 1.0f;
+    if (g_keys.yaw_right)  yaw += 1.0f;
+    if (g_keys.yaw_left)   yaw -= 1.0f;
+
+    static ControlInput smooth = {};
+    const float rate = 2.8f; // per second
+    float step = rate * dt;
+
+    float target_elev = glm::clamp(pitch * 0.7f, -1.0f, 1.0f);
+    float target_ail  = glm::clamp(roll  * 0.8f, -1.0f, 1.0f);
+    float target_rud  = glm::clamp(yaw   * 0.6f, -1.0f, 1.0f);
+
+    smooth.elevator = slew_to(smooth.elevator, target_elev, step);
+    smooth.aileron  = slew_to(smooth.aileron,  target_ail,  step);
+    smooth.rudder   = slew_to(smooth.rudder,   target_rud,  step);
+    smooth.throttle = glm::clamp(throttle_cmd, 0.0f, 1.0f);
+    return smooth;
+}
+
+static ControlInput build_autopilot_controls(float throttle_cmd) {
+    ControlInput ctrl{};
+    ctrl.elevator = 0.0f;
+    ctrl.aileron = 0.0f;
+    ctrl.rudder = 0.0f;
+    ctrl.throttle = glm::clamp(throttle_cmd, 0.0f, 1.0f);
+    return ctrl;
 }
 
 static float smooth_step(float e0, float e1, float x) {
@@ -52,7 +103,210 @@ static float smooth_step(float e0, float e1, float x) {
     return t * t * (3.0f - 2.0f * t);
 }
 
-static WireMesh make_quadrant_overlay_mesh(float z_plane) {
+[[maybe_unused]] static void update_throttle_cmd(float dt) {
+    const float rate = 0.35f;
+    float dir = 0.0f;
+    if (g_keys.speed_up) dir += 1.0f;
+    if (g_keys.speed_down) dir -= 1.0f;
+    g_throttle_cmd = glm::clamp(g_throttle_cmd + dir * rate * dt, 0.0f, 1.0f);
+}
+
+struct Phase {
+    std::string name;
+    float duration_s = 5.0f;
+    float throttle = 0.6f;
+    float elevator = 0.0f;
+    float aileron = 0.0f;
+    float rudder = 0.0f;
+    float flap = 0.0f;
+    float gear = 1.0f;
+};
+
+struct ScriptConfig {
+    std::string run_mode = "single"; // single | batch
+    std::string model = "c172x";
+    std::vector<std::string> models;
+    float initial_alt_m = 1000.0f;
+    float initial_speed_mps = 55.0f;
+    std::vector<Phase> phases;
+};
+
+static std::string trim_copy(const std::string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos) return "";
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return s.substr(a, b - a + 1);
+}
+
+static std::vector<std::string> split_csv(const std::string& s) {
+    std::vector<std::string> out;
+    std::stringstream ss(s);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        std::string t = trim_copy(item);
+        if (!t.empty()) out.push_back(t);
+    }
+    return out;
+}
+
+static ScriptConfig load_script(const std::string& path) {
+    ScriptConfig cfg;
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        return cfg;
+    }
+
+    std::string line;
+    bool in_phases = false;
+    bool in_initial = false;
+    Phase current;
+    bool have_current = false;
+
+    auto flush_phase = [&]() {
+        if (have_current) {
+            cfg.phases.push_back(current);
+            current = Phase{};
+            have_current = false;
+        }
+    };
+
+    while (std::getline(in, line)) {
+        std::string t = trim_copy(line);
+        if (t.empty() || t[0] == '#') continue;
+        if (t == "phases:" || t == "phases") {
+            in_phases = true;
+            in_initial = false;
+            continue;
+        }
+        if (t == "initial:" || t == "initial") {
+            in_initial = true;
+            in_phases = false;
+            continue;
+        }
+
+        if (t.rfind("models:", 0) == 0) {
+            std::string rest = trim_copy(t.substr(7));
+            cfg.models = split_csv(rest);
+            continue;
+        }
+        if (t.rfind("run_mode:", 0) == 0) {
+            cfg.run_mode = trim_copy(t.substr(9));
+            continue;
+        }
+        if (t.rfind("model:", 0) == 0) {
+            cfg.model = trim_copy(t.substr(6));
+            continue;
+        }
+
+        if (in_phases) {
+            if (t.rfind("-", 0) == 0) {
+                flush_phase();
+                have_current = true;
+                std::string after = trim_copy(t.substr(1));
+                if (after.rfind("name:", 0) == 0) {
+                    current.name = trim_copy(after.substr(5));
+                }
+                continue;
+            }
+            size_t colon = t.find(':');
+            if (colon == std::string::npos) continue;
+            std::string key = trim_copy(t.substr(0, colon));
+            std::string val = trim_copy(t.substr(colon + 1));
+            have_current = true;
+            if (key == "name") current.name = val;
+            else if (key == "duration_s") current.duration_s = std::stof(val);
+            else if (key == "throttle") current.throttle = std::stof(val);
+            else if (key == "elevator") current.elevator = std::stof(val);
+            else if (key == "aileron") current.aileron = std::stof(val);
+            else if (key == "rudder") current.rudder = std::stof(val);
+            else if (key == "flap") current.flap = std::stof(val);
+            else if (key == "gear") current.gear = std::stof(val);
+            continue;
+        }
+
+        if (in_initial) {
+            size_t colon = t.find(':');
+            if (colon == std::string::npos) continue;
+            std::string key = trim_copy(t.substr(0, colon));
+            std::string val = trim_copy(t.substr(colon + 1));
+            if (key == "altitude_m") cfg.initial_alt_m = std::stof(val);
+            else if (key == "speed_mps") cfg.initial_speed_mps = std::stof(val);
+            continue;
+        }
+    }
+    flush_phase();
+    return cfg;
+}
+
+static void write_default_script(const std::string& path) {
+    std::ofstream out(path, std::ios::out | std::ios::trunc);
+    if (!out.is_open()) return;
+    out << "run_mode: single\n";
+    out << "model: fgdata:c172p\n";
+    out << "models: fgdata:c172p\n";
+    out << "initial:\n";
+    out << "  altitude_m: 0\n";
+    out << "  speed_mps: 0\n";
+    out << "phases:\n";
+    out << "  - name: takeoff_roll\n";
+    out << "    duration_s: 10\n";
+    out << "    throttle: 1.0\n";
+    out << "    elevator: 0.03\n";
+    out << "    aileron: 0.0\n";
+    out << "    rudder: 0.0\n";
+    out << "    flap: 0.2\n";
+    out << "    gear: 1.0\n";
+    out << "  - name: flap_retract\n";
+    out << "    duration_s: 8\n";
+    out << "    throttle: 0.9\n";
+    out << "    elevator: 0.02\n";
+    out << "    aileron: 0.0\n";
+    out << "    rudder: 0.0\n";
+    out << "    flap: 0.0\n";
+    out << "    gear: 1.0\n";
+    out << "  - name: climb\n";
+    out << "    duration_s: 60\n";
+    out << "    throttle: 0.85\n";
+    out << "    elevator: 0.03\n";
+    out << "    aileron: 0.0\n";
+    out << "    rudder: 0.0\n";
+    out << "    flap: 0.0\n";
+    out << "    gear: 1.0\n";
+    out << "  - name: cruise\n";
+    out << "    duration_s: 120\n";
+    out << "    throttle: 0.65\n";
+    out << "    elevator: 0.0\n";
+    out << "    aileron: 0.0\n";
+    out << "    rudder: 0.0\n";
+    out << "    flap: 0.0\n";
+    out << "    gear: 1.0\n";
+    out << "  - name: descent\n";
+    out << "    duration_s: 80\n";
+    out << "    throttle: 0.35\n";
+    out << "    elevator: -0.015\n";
+    out << "    aileron: 0.0\n";
+    out << "    rudder: 0.0\n";
+    out << "    flap: 0.1\n";
+    out << "    gear: 1.0\n";
+    out << "  - name: approach\n";
+    out << "    duration_s: 60\n";
+    out << "    throttle: 0.28\n";
+    out << "    elevator: 0.01\n";
+    out << "    aileron: 0.0\n";
+    out << "    rudder: 0.0\n";
+    out << "    flap: 0.3\n";
+    out << "    gear: 1.0\n";
+    out << "  - name: landing\n";
+    out << "    duration_s: 20\n";
+    out << "    throttle: 0.18\n";
+    out << "    elevator: 0.02\n";
+    out << "    aileron: 0.0\n";
+    out << "    rudder: 0.0\n";
+    out << "    flap: 0.4\n";
+    out << "    gear: 1.0\n";
+}
+
+static WireMesh make_quadrant_overlay_mesh(float z_plane, float ring_scale, float ring_pulse) {
     WireMesh m;
     auto add_seg = [&](const glm::vec3& a, const glm::vec3& b) {
         unsigned int i = (unsigned int)m.vertices.size();
@@ -61,52 +315,23 @@ static WireMesh make_quadrant_overlay_mesh(float z_plane) {
         m.line_indices.push_back(i);
         m.line_indices.push_back(i + 1);
     };
-    auto add_dashed_seg = [&](const glm::vec3& a,
-                              const glm::vec3& b,
-                              float dash_len,
-                              float gap_len) {
-        glm::vec3 d = b - a;
-        float len = glm::length(d);
-        if (len < 1e-4f) return;
-        glm::vec3 dir = d / len;
-        float t = 0.0f;
-        while (t < len) {
-            float t0 = t;
-            float t1 = glm::min(t + dash_len, len);
-            add_seg(a + dir * t0, a + dir * t1);
-            t += dash_len + gap_len;
-        }
-    };
-
-    const float x_min = -760.0f;
-    const float x_max =  760.0f;
-    const float y_min =  260.0f;
-    const float y_max = 1700.0f;
-    const float origin_y = START_POS.y; // 1000
-    const float dash_len = 26.0f;
-    const float gap_len = 14.0f;
-
-    //  translated comment
-    add_dashed_seg({x_min, y_min, z_plane}, {x_max, y_min, z_plane}, dash_len, gap_len);
-    add_dashed_seg({x_max, y_min, z_plane}, {x_max, y_max, z_plane}, dash_len, gap_len);
-    add_dashed_seg({x_max, y_max, z_plane}, {x_min, y_max, z_plane}, dash_len, gap_len);
-    add_dashed_seg({x_min, y_max, z_plane}, {x_min, y_min, z_plane}, dash_len, gap_len);
-
-    //  translated comment
-    add_dashed_seg({0.0f,  y_min,    z_plane}, {0.0f,  y_max,    z_plane}, dash_len, gap_len);
-    add_dashed_seg({x_min, origin_y, z_plane}, {x_max, origin_y, z_plane}, dash_len, gap_len);
-
-    //  translated comment
-    const float o = 22.0f;
-    add_seg({-o, origin_y, z_plane}, { o, origin_y, z_plane});
-    add_seg({0.0f, origin_y - o, z_plane}, {0.0f, origin_y + o, z_plane});
-
-    const float b = 14.0f;
-    add_seg({-b, origin_y - b, z_plane}, { b, origin_y - b, z_plane});
-    add_seg({ b, origin_y - b, z_plane}, { b, origin_y + b, z_plane});
-    add_seg({ b, origin_y + b, z_plane}, {-b, origin_y + b, z_plane});
-    add_seg({-b, origin_y + b, z_plane}, {-b, origin_y - b, z_plane});
-
+    // Mouse-aim style ring (War Thunder-like): outer + inner circle + top notch.
+    const int seg = 40;
+    const float r0 = (36.0f * ring_scale) * (1.0f + ring_pulse);
+    const float r1 = (30.0f * ring_scale) * (1.0f + ring_pulse * 0.85f);
+    for (int i = 0; i < seg; ++i) {
+        float a0 = (2.0f * glm::pi<float>() * i) / seg;
+        float a1 = (2.0f * glm::pi<float>() * (i + 1)) / seg;
+        add_seg({std::cos(a0) * r0, std::sin(a0) * r0, z_plane},
+                {std::cos(a1) * r0, std::sin(a1) * r0, z_plane});
+        add_seg({std::cos(a0) * r1, std::sin(a0) * r1, z_plane},
+                {std::cos(a1) * r1, std::sin(a1) * r1, z_plane});
+    }
+    // Top notch.
+    add_seg({-4.0f, r0 + 6.0f, z_plane}, {4.0f, r0 + 6.0f, z_plane});
+    // Small center dot.
+    add_seg({-3.0f, 0.0f, z_plane}, {3.0f, 0.0f, z_plane});
+    add_seg({0.0f, -3.0f, z_plane}, {0.0f, 3.0f, z_plane});
     return m;
 }
 
@@ -127,6 +352,14 @@ static void key_callback(GLFWwindow* win, int key, int, int action, int) {
         case GLFW_KEY_RIGHT_SHIFT:   g_keys.speed_up   = pressed; break;
         case GLFW_KEY_LEFT_CONTROL:
         case GLFW_KEY_RIGHT_CONTROL: g_keys.speed_down = pressed; break;
+        case GLFW_KEY_UP:
+        case GLFW_KEY_I:             g_keys.trim_up    = pressed; break;
+        case GLFW_KEY_DOWN:
+        case GLFW_KEY_K:             g_keys.trim_down  = pressed; break;
+        case GLFW_KEY_LEFT:
+        case GLFW_KEY_J:             g_keys.trim_left  = pressed; break;
+        case GLFW_KEY_RIGHT:
+        case GLFW_KEY_L:             g_keys.trim_right = pressed; break;
         case GLFW_KEY_SPACE:
             if (action == GLFW_PRESS) {
                 g_keys.fire_held = true;
@@ -145,7 +378,7 @@ static void key_callback(GLFWwindow* win, int key, int, int action, int) {
 
 //  translated comment
 // base_cmd  translated comment
-static void apply_player_intervention(AttitudeCommand& cmd,
+[[maybe_unused]] static void apply_player_intervention(AttitudeCommand& cmd,
                                       const AttitudeCommand& base_cmd,
                                       float dt) {
     const float PITCH_DELTA = glm::radians(6.0f);   // rad/s
@@ -176,7 +409,7 @@ static void apply_player_intervention(AttitudeCommand& cmd,
     cmd.throttle  = glm::clamp(cmd.throttle, 0.0f, 1.0f);
 }
 
-static void update_game_speed_scale(float dt) {
+[[maybe_unused]] static void update_game_speed_scale(float dt) {
     const float kMinScale = 0.70f;
     const float kMaxScale = 1.60f;
     const float kAdjustPerSec = 0.45f;
@@ -184,6 +417,20 @@ static void update_game_speed_scale(float dt) {
     if (g_keys.speed_up) dir += 1.0f;
     if (g_keys.speed_down) dir -= 1.0f;
     g_game_speed_scale = glm::clamp(g_game_speed_scale + dir * kAdjustPerSec * dt, kMinScale, kMaxScale);
+}
+
+[[maybe_unused]] static void update_trim_origin(float dt, const AircraftState& state) {
+    // Auto-moving trim target in world space.
+    const float auto_forward = 85.0f * g_game_speed_scale;
+    const float auto_sway = 40.0f;
+    const float auto_heave = 28.0f;
+    g_trim_origin.z -= auto_forward * dt;
+    g_trim_origin.x = std::sin((float)glfwGetTime() * 0.35f) * auto_sway;
+    g_trim_origin.y = glm::clamp(
+        state.position.y + std::sin((float)glfwGetTime() * 0.42f) * auto_heave,
+        LOW_ALT_MIN_Y + 120.0f, LOW_ALT_MAX_Y - 120.0f
+    );
+    g_trim_origin.y = glm::clamp(g_trim_origin.y, LOW_ALT_MIN_Y + 120.0f, LOW_ALT_MAX_Y - 120.0f);
 }
 
 //  translated comment
@@ -410,29 +657,20 @@ static void respawn_enemy(EnemyAircraft& enemy,
                           int idx,
                           float t_now,
                           float game_speed_scale) {
-    glm::mat3 world_from_body = glm::mat3_cast(player.orientation);
-    glm::vec3 fwd = glm::normalize(world_from_body * glm::vec3(0, 0, -1));
-    glm::vec3 right = glm::normalize(world_from_body * glm::vec3(1, 0, 0));
+    float seed = (float)idx * 1.618f + t_now * 0.21f;
+    float az = glm::two_pi<float>() * (0.5f + 0.5f * std::sin(seed * 2.1f));
+    float radius = 1500.0f + 1400.0f * (0.5f + 0.5f * std::cos(seed * 1.37f));
+    float h = player.position.y + (-120.0f + 240.0f * (0.5f + 0.5f * std::sin(seed * 0.87f)));
 
-    //  translated comment
-    // mode=0:  translated comment
-    int sx = ((idx + (int)(t_now * 3.0f)) % 2 == 0) ? 1 : -1;
-    int sy = ((idx + (int)(t_now * 2.0f)) % 2 == 0) ? 1 : -1;
-    int mode = (idx + (int)(t_now * 1.7f)) % 2;
+    enemy.position = player.position + glm::vec3(std::cos(az) * radius, 0.0f, std::sin(az) * radius);
+    enemy.position.y = glm::clamp(h, LOW_ALT_MIN_Y + 40.0f, LOW_ALT_MAX_Y - 25.0f);
 
-    float near_small = 45.0f + 70.0f * (0.5f + 0.5f * std::sin(0.8f * t_now + 1.3f * idx));
-    float near_large = 160.0f + 170.0f * (0.5f + 0.5f * std::cos(0.6f * t_now + 0.9f * idx));
-    float lateral = (mode == 0) ? sx * near_small : sx * near_large;
-    float vertical = (mode == 0) ? sy * near_large : sy * near_small;
-    float ahead = 1250.0f + idx * 170.0f;
-
-    enemy.position = player.position + fwd * ahead + right * lateral + glm::vec3(0.0f, vertical, 0.0f);
-    //  translated comment
-    enemy.position.x = glm::clamp(enemy.position.x, -660.0f, 660.0f);
-    enemy.position.y = glm::clamp(enemy.position.y, 240.0f, 1880.0f);
-
-    glm::vec3 dir_to_player = glm::normalize(player.position - enemy.position);
-    enemy.velocity = dir_to_player * (58.0f + 4.0f * (idx % 3)) * game_speed_scale;
+    glm::vec3 to_player = player.position - enemy.position;
+    glm::vec3 tangent(-to_player.z, 0.0f, to_player.x);
+    if (glm::length(tangent) > 1e-4f) tangent = glm::normalize(tangent);
+    float curve = std::sin(seed * 1.7f) * 0.28f;
+    glm::vec3 dir = glm::normalize(to_player + tangent * curve * glm::length(to_player));
+    enemy.velocity = dir * (58.0f + 4.0f * (idx % 3)) * game_speed_scale;
     enemy.orientation = orientation_from_forward(enemy.velocity);
 }
 
@@ -481,8 +719,8 @@ static void respawn_enemy(EnemyAircraft& enemy,
 }
 
 //  translated comment
-static void apply_side_scroller_motion(AircraftState& state, float dt) {
-    //  translated comment
+[[maybe_unused]] static void apply_constrained_3d_motion(AircraftState& state, float dt) {
+    // Restore 2.5D feel: motion constrained in a trim-centered XY window.
     float axis_x = 0.0f;
     float axis_y = 0.0f;
     float ad = 0.0f;
@@ -493,52 +731,37 @@ static void apply_side_scroller_motion(AircraftState& state, float dt) {
     if (g_keys.roll_left)  ad -= 1.0f;      // A
     if (g_keys.roll_right) ad += 1.0f;      // D
 
-    float pitch_hint = (glm::mat3_cast(state.orientation) * glm::vec3(0, 0, -1)).y;
-    int y_sign = 0;
-    if (axis_y > 0.1f) y_sign = 1;
-    else if (axis_y < -0.1f) y_sign = -1;
-    else if (std::abs(pitch_hint) > 0.04f) y_sign = (pitch_hint > 0.0f) ? 1 : -1;
+    float input_x = glm::clamp(axis_x + ad * 0.85f, -1.0f, 1.0f);
+    float input_y = glm::clamp(axis_y + ad * 0.30f, -1.0f, 1.0f);
+    float scroll_speed = 138.0f * g_game_speed_scale;
+    float side_speed = 120.0f * g_game_speed_scale;
+    float vertical_speed = 100.0f * g_game_speed_scale;
 
-    float input_x = axis_x + ad;
-    float input_y = axis_y + ad * (float)y_sign * 0.9f;
-    input_x = glm::clamp(input_x, -1.0f, 1.0f);
-    input_y = glm::clamp(input_y, -1.0f, 1.0f);
-
-    //  translated comment
-    float qx = (std::abs(axis_x) > 0.1f) ? axis_x : input_x;
-    float qy = (std::abs(axis_y) > 0.1f) ? axis_y : (float)y_sign;
-    if (qx >= 0.0f && qy >= 0.0f) g_motion_quadrant = 1;
-    else if (qx < 0.0f && qy >= 0.0f) g_motion_quadrant = 2;
-    else if (qx < 0.0f && qy < 0.0f) g_motion_quadrant = 3;
-    else g_motion_quadrant = 4;
-
-    const float scroll_speed = 128.0f * g_game_speed_scale;
-    const float side_speed = 88.0f * g_game_speed_scale;
-    const float vertical_speed = 74.0f * g_game_speed_scale;
-
-    float target_vx = input_x * side_speed;
-    float target_vy = input_y * vertical_speed;
-    float blend = 1.0f - std::exp(-8.0f * dt);
-
+    glm::vec3 to_origin = g_trim_origin - state.position;
+    float chase_vx = glm::clamp(to_origin.x * 0.35f, -side_speed, side_speed);
+    float chase_vy = glm::clamp(to_origin.y * 0.32f, -vertical_speed, vertical_speed);
+    float target_vx = chase_vx + input_x * side_speed * 0.85f;
+    float target_vy = chase_vy + input_y * vertical_speed * 0.85f;
+    target_vx = glm::clamp(target_vx, -side_speed, side_speed);
+    target_vy = glm::clamp(target_vy, -vertical_speed, vertical_speed);
+    float blend = 1.0f - std::exp(-12.0f * dt);
     state.velocity.x = glm::mix(state.velocity.x, target_vx, blend);
     state.velocity.y = glm::mix(state.velocity.y, target_vy, blend);
     state.velocity.z = -scroll_speed;
     state.position += state.velocity * dt;
 
-    //  translated comment
-    state.position.x = glm::clamp(state.position.x, -760.0f, 760.0f);
-    state.position.y = glm::clamp(state.position.y, 260.0f, 1700.0f);
+    // No quadrant boundary anymore; keep only low-altitude envelope.
+    state.position.y = glm::clamp(state.position.y, LOW_ALT_MIN_Y, LOW_ALT_MAX_Y);
 
-    //  translated comment
-    // W/S ->  translated comment
-    float target_pitch = glm::radians(10.0f) * axis_y;
-    float target_yaw   = glm::radians(16.0f) * axis_x;
-    float target_roll  = glm::radians(-24.0f) * ad;
+    // Aircraft points back toward trim origin on XY plane.
+    float target_yaw = std::atan2(to_origin.x, -state.velocity.z);
+    float target_pitch = glm::clamp(std::atan2(to_origin.y, glm::max(std::abs(state.velocity.z), 1.0f)), glm::radians(-20.0f), glm::radians(20.0f));
+    float target_roll = glm::radians(-32.0f) * ad;
     glm::quat target_q = glm::quat(glm::vec3(target_pitch, target_yaw, target_roll));
-    float s = 1.0f - std::exp(-9.0f * dt);
+    float s = 1.0f - std::exp(-8.0f * dt);
     state.orientation = glm::normalize(glm::slerp(state.orientation, target_q, s));
+    state.angular_vel *= std::exp(-4.0f * dt);
 
-    state.angular_vel *= std::exp(-5.5f * dt);
 }
 
 static void update_enemies(std::vector<EnemyAircraft>& enemies,
@@ -546,7 +769,6 @@ static void update_enemies(std::vector<EnemyAircraft>& enemies,
                            float dt,
                            float t_now,
                            float game_speed_scale) {
-    glm::vec3 player_fwd = glm::normalize(glm::mat3_cast(player.orientation) * glm::vec3(0, 0, -1));
     for (size_t i = 0; i < enemies.size(); ++i) {
         EnemyAircraft& e = enemies[i];
         float desired_speed = (58.0f + 4.0f * (i % 3)) * game_speed_scale;
@@ -559,15 +781,13 @@ static void update_enemies(std::vector<EnemyAircraft>& enemies,
             e.velocity = (d > 1e-4f) ? (to_player / d) * desired_speed : glm::vec3(0.0f, 0.0f, -desired_speed);
         }
         e.position += e.velocity * dt;
+        e.position.y = glm::clamp(e.position.y, LOW_ALT_MIN_Y + 25.0f, LOW_ALT_MAX_Y - 15.0f);
         e.orientation = orientation_from_forward(e.velocity);
 
         glm::vec3 rel = e.position - player.position;
-        float ahead = glm::dot(rel, player_fwd);
-        if (ahead < -500.0f ||
-            glm::length(rel) > 4800.0f ||
-            e.position.x < -670.0f || e.position.x > 670.0f ||
-            e.position.y < 140.0f ||
-            e.position.y > player.position.y + 900.0f) {
+        if (glm::length(rel) > 6200.0f ||
+            e.position.y < LOW_ALT_MIN_Y + 20.0f ||
+            e.position.y > LOW_ALT_MAX_Y - 10.0f) {
             respawn_enemy(e, player, (int)i, t_now, game_speed_scale);
         }
     }
@@ -686,7 +906,7 @@ static float wrap_pi(float a) {
     return a;
 }
 
-static AttitudeCommand build_combat_assist_command(const AircraftState& state,
+[[maybe_unused]] static AttitudeCommand build_combat_assist_command(const AircraftState& state,
                                                    const std::vector<EnemyAircraft>& enemies,
                                                    float dt,
                                                    const AttitudeCommand& prev_cmd) {
@@ -809,7 +1029,7 @@ static AttitudeCommand build_combat_assist_command(const AircraftState& state,
 }
 
 //  translated comment
-static void apply_sink_guard(const AircraftState& state, float dt, AttitudeCommand& cmd) {
+[[maybe_unused]] static void apply_sink_guard(const AircraftState& state, float dt, AttitudeCommand& cmd) {
     float alt = state.position.y;
     float sink_rate = -state.velocity.y; // >0  translated comment
 
@@ -843,7 +1063,7 @@ static void apply_sink_guard(const AircraftState& state, float dt, AttitudeComma
 }
 
 //  translated comment
-static void apply_hard_safety_floor(AircraftState& state, float dt) {
+[[maybe_unused]] static void apply_hard_safety_floor(AircraftState& state, float dt) {
     float alt = state.position.y;
 
     if (alt < 520.0f) {
@@ -880,18 +1100,21 @@ static void update_chase_camera(const AircraftState& state,
                                 float dt,
                                 glm::vec3& eye,
                                 glm::vec3& target) {
-    glm::mat3 world_from_body = glm::mat3_cast(state.orientation);
-    glm::vec3 forward = glm::normalize(world_from_body * glm::vec3(0, 0, -1));
-    glm::vec3 up = glm::normalize(world_from_body * glm::vec3(0, 1, 0));
-    glm::vec3 right = glm::normalize(world_from_body * glm::vec3(1, 0, 0));
+    // WT-like chase: stabilized horizon, behind velocity vector with lag.
+    glm::vec3 up(0.0f, 1.0f, 0.0f);
+    glm::vec3 vel = state.velocity;
+    if (glm::length(vel) < 1e-3f) vel = glm::vec3(0.0f, 0.0f, -1.0f);
+    glm::vec3 fwd = glm::normalize(vel);
+    glm::vec3 right = glm::normalize(glm::cross(up, -fwd));
+    if (glm::length(right) < 1e-4f) right = glm::vec3(1.0f, 0.0f, 0.0f);
 
-    //  translated comment
-    glm::vec3 tail_anchor_local(0.0f, 0.70f, 3.20f);
-    glm::vec3 tail_anchor = state.position + world_from_body * tail_anchor_local;
+    float speed = glm::length(state.velocity);
+    float back = glm::mix(52.0f, 86.0f, glm::clamp(speed / 240.0f, 0.0f, 1.0f));
+    float height = glm::mix(18.0f, 28.0f, glm::clamp(speed / 240.0f, 0.0f, 1.0f));
+    float side = 3.0f;
 
-    //  translated comment
-    glm::vec3 desired_eye = tail_anchor - forward * 21.0f + up * 5.0f + right * 0.6f;
-    glm::vec3 desired_target = tail_anchor + forward * 30.0f + up * 1.0f;
+    glm::vec3 desired_eye = state.position - fwd * back + up * height + right * side;
+    glm::vec3 desired_target = state.position + fwd * 120.0f + up * 6.0f;
 
     static bool initialized = false;
     static glm::vec3 smoothed_eye;
@@ -902,7 +1125,7 @@ static void update_chase_camera(const AircraftState& state,
         initialized = true;
     }
 
-    float smooth = 1.0f - std::exp(-7.0f * dt);
+    float smooth = 1.0f - std::exp(-6.0f * dt);
     smoothed_eye = glm::mix(smoothed_eye, desired_eye, smooth);
     smoothed_target = glm::mix(smoothed_target, desired_target, smooth);
 
@@ -952,7 +1175,6 @@ int main() {
     WireMesh bullet_mesh = make_bullet_mesh();
     WireMesh cloud_mesh = make_cloud_mesh();
     WireMesh explosion_mesh = make_explosion_mesh();
-    WireMesh roundel_mesh = make_roundel_mesh();
     const float player_model_scale = 1.42f;
     const float enemy_model_scale = 1.42f;
     const glm::vec3 player_usn_base(0.18f, 0.28f, 0.56f);   // WWII USN night sea blue (boosted visibility)
@@ -962,19 +1184,21 @@ int main() {
     //  translated comment
     AircraftState state;
     state.position    = START_POS;                  // 1000m translated comment
-    state.velocity    = glm::vec3(0, 0, -150.0f);   //  translated comment
+    state.velocity    = glm::vec3(0, 0, -60.0f);   //  translated comment
     state.orientation = glm::quat(1, 0, 0, 0);      //  translated comment
     state.angular_vel = glm::vec3(0, 0, 0);
 
-    AttitudeCommand command;
-    // --- Real Physics Path (reserved for future expansion) ---
-    // FlightDynamics  dynamics;
-    // FlightController controller;
-    command.throttle = 0.6f;
+    // --- JSBSim Flight Dynamics ---
+    JSBSimAdapter jsbsim;
+    bool jsbsim_ready = false;
+    ScriptConfig script;
+    int model_index = 0;
+    int phase_index = 0;
+    float phase_time_s = 0.0f;
     std::vector<Projectile> bullets;
     std::vector<Projectile> bombs;
-    std::vector<EnemyAircraft> enemies(6);
-    std::vector<Cloud> clouds(14);
+    std::vector<EnemyAircraft> enemies(kEnableCombat ? 6 : 0);
+    std::vector<Cloud> clouds;
     std::vector<AABattery> aa_batteries;
     std::vector<AAShell> aa_shells;
     std::vector<Explosion> explosions;
@@ -988,33 +1212,80 @@ int main() {
     double last_time = glfwGetTime();
     double accumulator = 0.0;
     bool crashed = false;
-    bool intro_active = true;
+    bool intro_active = false;
     double intro_time_s = 0.0;
     const double intro_duration_s = 8.5;
-    const glm::vec3 carrier_pos(0.0f, START_POS.y - 70.0f, 220.0f);
+    [[maybe_unused]] const glm::vec3 carrier_pos(0.0f, START_POS.y - 70.0f, 220.0f);
+    std::ofstream csv_log;
+    double sim_time_s = 0.0;
 
     printf("Fighter Sim started\n");
     printf("OpenGL: %s\n", glGetString(GL_VERSION));
-    for (size_t i = 0; i < enemies.size(); ++i) {
-        respawn_enemy(enemies[i], state, (int)i, 0.0f, g_game_speed_scale);
+    if (kEnableCombat) {
+        for (size_t i = 0; i < enemies.size(); ++i) {
+            respawn_enemy(enemies[i], state, (int)i, 0.0f, g_game_speed_scale);
+        }
     }
-    for (size_t i = 0; i < clouds.size(); ++i) {
-        clouds[i].position = state.position + glm::vec3(
-            ((int)(i % 7) - 3) * 220.0f,
-            920.0f + 200.0f * (i % 5),
-            -1200.0f - 240.0f * (i / 2)
-        );
-    }
-    for (int i = 0; i < 10; ++i) {
-        AABattery b;
-        b.position = glm::vec3(-1800.0f + i * 380.0f, 0.0f, -2200.0f - i * 520.0f);
-        b.cooldown_s = 0.35f * i;
-        aa_batteries.push_back(b);
+    // clouds disabled
+    if (kEnableCombat) {
+        for (int i = 0; i < 10; ++i) {
+            AABattery b;
+            b.position = glm::vec3(-1800.0f + i * 380.0f, 0.0f, -2200.0f - i * 520.0f);
+            b.cooldown_s = 0.35f * i;
+            aa_batteries.push_back(b);
+        }
     }
 
-    printf("Mode: side-scrolling combat (3D presentation)\n");
-    printf("Intro: carrier launch sequence (Enterprise style)\n");
-    printf("Controls: W/S=climb/dive Q/E=strafe left/right A/D=bank + diagonal maneuver assist Shift/Ctrl=game speed +/- Space=tap(release)=bomb hold=machine gun ESC=quit\n\n");
+    printf("Mode: JSBSim scripted experiment\n");
+    printf("Intro: disabled\n");
+    printf("Controls: ESC=quit\n\n");
+
+    std::string script_path = std::string(FIGHTER_SIM_ROOT) + "/" + kScriptPath;
+    if (!std::filesystem::exists(script_path)) {
+        std::filesystem::create_directories(std::string(FIGHTER_SIM_ROOT) + "/config");
+        write_default_script(script_path);
+        printf("Created default script: %s\n", script_path.c_str());
+    }
+    script = load_script(script_path);
+    if (script.run_mode == "single") {
+        script.models.clear();
+        if (!script.model.empty()) {
+            script.models.push_back(script.model);
+        }
+    }
+    if (script.models.empty()) {
+        printf("No models found in %s. Exiting.\n", script_path.c_str());
+        return 1;
+    }
+    if (script.phases.empty()) {
+        printf("No phases found in %s. Exiting.\n", script_path.c_str());
+        return 1;
+    }
+
+    std::filesystem::create_directories(std::string(FIGHTER_SIM_ROOT) + "/build/logs");
+
+    state.position = glm::vec3(0.0f, script.initial_alt_m, 0.0f);
+    state.velocity = glm::vec3(0.0f, 0.0f, -script.initial_speed_mps);
+    state.orientation = glm::quat(1, 0, 0, 0);
+    state.angular_vel = glm::vec3(0.0f);
+
+    jsbsim_ready = jsbsim.init(script.models[model_index], state, SIM_DT);
+    if (!jsbsim_ready) {
+        printf("JSBSim init failed (model %s). Exiting.\n", script.models[model_index].c_str());
+        return 1;
+    }
+    jsbsim.sync_state(state);
+    if (kUseAutopilot) {
+        jsbsim.enable_autopilot();
+    }
+
+    std::string log_path = std::string(FIGHTER_SIM_ROOT) + "/build/logs/" + script.models[model_index] + ".csv";
+    csv_log.open(log_path, std::ios::out | std::ios::trunc);
+    if (csv_log.is_open()) {
+        csv_log << "t_s,phase,px_m,py_m,pz_m,vx_mps,vy_mps,vz_mps,roll_rad,pitch_rad,yaw_rad,p_rad_s,q_rad_s,r_rad_s,aoa_rad,airspeed_mps,throttle\n";
+    } else {
+        printf("Warning: could not open %s for writing.\n", log_path.c_str());
+    }
 
     // ──  translated comment
 
@@ -1074,93 +1345,171 @@ int main() {
             if (intro_time_s >= intro_duration_s) {
                 intro_active = false;
                 //  translated comment
-                state.velocity = glm::vec3(0.0f, 0.0f, -128.0f);
+                state.velocity = glm::vec3(0.0f, 0.0f, -55.0f);
                 state.orientation = glm::quat(1, 0, 0, 0);
+                g_trim_origin = state.position;
             }
             continue;
         }
 
-        update_game_speed_scale((float)frame_time);
+        // Game speed locked when using JSBSim direct control.
+        g_trim_origin = state.position;
 
-        double hold_duration = g_keys.fire_held ? (now - g_keys.fire_press_time) : 0.0;
-        bool machine_gun_mode = g_keys.fire_held && hold_duration >= hold_fire_threshold_s;
-        if (g_keys.fire_released) {
-            if (g_keys.fire_release_duration < hold_fire_threshold_s) {
-                spawn_bomb(state, bombs);
+        if (kEnableCombat) {
+            double hold_duration = g_keys.fire_held ? (now - g_keys.fire_press_time) : 0.0;
+            bool machine_gun_mode = g_keys.fire_held && hold_duration >= hold_fire_threshold_s;
+            if (g_keys.fire_released) {
+                if (g_keys.fire_release_duration < hold_fire_threshold_s) {
+                    spawn_bomb(state, bombs);
+                }
+                g_keys.fire_released = false;
             }
-            g_keys.fire_released = false;
-        }
-        if (machine_gun_mode) {
-            gun_timer_s -= frame_time;
-            while (gun_timer_s <= 0.0) {
-                spawn_bullet(state, bullets, muzzle_index++);
-                gun_timer_s += gun_interval_s;
+            if (machine_gun_mode) {
+                gun_timer_s -= frame_time;
+                while (gun_timer_s <= 0.0) {
+                    spawn_bullet(state, bullets, muzzle_index++);
+                    gun_timer_s += gun_interval_s;
+                }
+            } else {
+                gun_timer_s = 0.0;
             }
         } else {
+            g_keys.fire_released = false;
             gun_timer_s = 0.0;
         }
 
-        AttitudeCommand base_command =
-            build_combat_assist_command(state, enemies, (float)frame_time, command);
-        command = base_command;
-        apply_player_intervention(command, base_command, (float)frame_time);
-        apply_sink_guard(state, (float)frame_time, command);
+        if (!script.phases.empty()) {
+            g_throttle_cmd = script.phases[phase_index].throttle;
+        }
 
         //  translated comment
         while (accumulator >= SIM_DT) {
-            // --- Real Physics Path (reserved for future expansion) ---
-            // apply_direct_player_attitude_control(state, SIM_DT);
-            // ControlInput ctrl = controller.update(state, command, SIM_DT);
-            // dynamics.step(state, ctrl, SIM_DT);
-            // keep_forward_flight(state, SIM_DT);
+            float sim_dt = SIM_DT * g_game_speed_scale;
+            const Phase& phase = script.phases[phase_index];
+            ControlInput ctrl{};
+            if (kUseAutopilot) {
+                ctrl = build_autopilot_controls(g_throttle_cmd);
+            } else {
+                ctrl.elevator = glm::clamp(phase.elevator, -1.0f, 1.0f);
+                ctrl.aileron  = glm::clamp(phase.aileron,  -1.0f, 1.0f);
+                ctrl.rudder   = glm::clamp(phase.rudder,   -1.0f, 1.0f);
+                ctrl.throttle = glm::clamp(phase.throttle, 0.0f, 1.0f);
+            }
+            jsbsim.set_controls(ctrl);
+            jsbsim.set_aux_controls(phase.flap, phase.gear);
+            jsbsim.step(sim_dt);
+            jsbsim.sync_state(state);
+            sim_time_s += sim_dt;
+            if (csv_log.is_open()) {
+                glm::vec3 euler = state.euler_angles();
+                glm::vec3 body_vel = glm::mat3_cast(glm::inverse(state.orientation)) * state.velocity;
+                float forward_speed = -body_vel.z;
+                if (forward_speed < 0.1f) forward_speed = 0.1f;
+                float aoa_rad = std::atan2(body_vel.y, forward_speed);
+                float airspeed = glm::length(state.velocity);
+                csv_log << sim_time_s << ","
+                        << "\"" << phase.name << "\"" << ","
+                        << state.position.x << "," << state.position.y << "," << state.position.z << ","
+                        << state.velocity.x << "," << state.velocity.y << "," << state.velocity.z << ","
+                        << euler.z << "," << euler.x << "," << euler.y << ","
+                        << state.angular_vel.z << "," << state.angular_vel.x << "," << state.angular_vel.y << ","
+                        << aoa_rad << "," << airspeed << ","
+                        << g_throttle_cmd << "\n";
+            }
+            phase_time_s += sim_dt;
+            if (phase_time_s >= phase.duration_s) {
+                phase_time_s = 0.0f;
+                phase_index++;
+                if (phase_index >= (int)script.phases.size()) {
+                    phase_index = 0;
+                    model_index++;
+                    if (csv_log.is_open()) {
+                        csv_log.close();
+                    }
+                    if (model_index >= (int)script.models.size()) {
+                        glfwSetWindowShouldClose(window, true);
+                        break;
+                    }
 
-            apply_side_scroller_motion(state, SIM_DT);
-            apply_hard_safety_floor(state, SIM_DT);
-            update_projectiles(bullets, bombs, SIM_DT);
-            update_ground_aa(aa_batteries, aa_shells, state, SIM_DT);
-            update_explosions(explosions, SIM_DT);
+                    state.position = glm::vec3(0.0f, script.initial_alt_m, 0.0f);
+                    state.velocity = glm::vec3(0.0f, 0.0f, -script.initial_speed_mps);
+                    state.orientation = glm::quat(1, 0, 0, 0);
+                    state.angular_vel = glm::vec3(0.0f);
+
+                    jsbsim_ready = jsbsim.init(script.models[model_index], state, SIM_DT);
+                    if (!jsbsim_ready) {
+                        printf("JSBSim init failed (model %s). Exiting.\n", script.models[model_index].c_str());
+                        glfwSetWindowShouldClose(window, true);
+                        break;
+                    }
+                    jsbsim.sync_state(state);
+                    if (kUseAutopilot) {
+                        jsbsim.enable_autopilot();
+                    }
+                    sim_time_s = 0.0;
+
+                    std::string log_path = std::string(FIGHTER_SIM_ROOT) + "/build/logs/" + script.models[model_index] + ".csv";
+                    csv_log.open(log_path, std::ios::out | std::ios::trunc);
+                    if (csv_log.is_open()) {
+                        csv_log << "t_s,phase,px_m,py_m,pz_m,vx_mps,vy_mps,vz_mps,roll_rad,pitch_rad,yaw_rad,p_rad_s,q_rad_s,r_rad_s,aoa_rad,airspeed_mps,throttle\n";
+                    } else {
+                        printf("Warning: could not open %s for writing.\n", log_path.c_str());
+                    }
+                }
+            }
+            if (kEnableCombat) {
+                update_projectiles(bullets, bombs, sim_dt);
+                update_ground_aa(aa_batteries, aa_shells, state, sim_dt);
+                update_explosions(explosions, sim_dt);
+            }
             accumulator -= SIM_DT;
         }
 
-        update_enemies(enemies, state, (float)frame_time, (float)now, g_game_speed_scale);
-        update_clouds(clouds, state, (float)now);
+        if (kEnableCombat) {
+            update_enemies(enemies, state, (float)frame_time, (float)now, g_game_speed_scale);
+        }
+        // clouds disabled
 
         //  translated comment
-        for (auto it_b = bullets.begin(); it_b != bullets.end();) {
-            bool hit = false;
-            for (size_t i = 0; i < enemies.size(); ++i) {
-                if (glm::distance(it_b->position, enemies[i].position) < 26.0f) {
-                    explosions.push_back(Explosion{enemies[i].position, 0.45f, 0.45f});
-                    respawn_enemy(enemies[i], state, (int)i, (float)now, g_game_speed_scale);
-                    score += 10;
-                    hit = true;
-                    break;
+        if (kEnableCombat) {
+            for (auto it_b = bullets.begin(); it_b != bullets.end();) {
+                bool hit = false;
+                for (size_t i = 0; i < enemies.size(); ++i) {
+                    if (glm::distance(it_b->position, enemies[i].position) < 26.0f) {
+                        explosions.push_back(Explosion{enemies[i].position, 0.45f, 0.45f});
+                        respawn_enemy(enemies[i], state, (int)i, (float)now, g_game_speed_scale);
+                        score += 10;
+                        hit = true;
+                        break;
+                    }
                 }
+                if (hit) it_b = bullets.erase(it_b);
+                else ++it_b;
             }
-            if (hit) it_b = bullets.erase(it_b);
-            else ++it_b;
         }
         //  translated comment
-        for (auto it_m = bombs.begin(); it_m != bombs.end();) {
-            bool exploded = false;
-            for (size_t i = 0; i < enemies.size(); ++i) {
-                if (glm::distance(it_m->position, enemies[i].position) < 58.0f) {
-                    explosions.push_back(Explosion{enemies[i].position, 0.52f, 0.52f});
-                    respawn_enemy(enemies[i], state, (int)i, (float)now, g_game_speed_scale);
-                    score += 20;
-                    exploded = true;
-                    break;
+        if (kEnableCombat) {
+            for (auto it_m = bombs.begin(); it_m != bombs.end();) {
+                bool exploded = false;
+                for (size_t i = 0; i < enemies.size(); ++i) {
+                    if (glm::distance(it_m->position, enemies[i].position) < 58.0f) {
+                        explosions.push_back(Explosion{enemies[i].position, 0.52f, 0.52f});
+                        respawn_enemy(enemies[i], state, (int)i, (float)now, g_game_speed_scale);
+                        score += 20;
+                        exploded = true;
+                        break;
+                    }
                 }
+                if (exploded) it_m = bombs.erase(it_m);
+                else ++it_m;
             }
-            if (exploded) it_m = bombs.erase(it_m);
-            else ++it_m;
-        }
-        for (auto it_s = aa_shells.begin(); it_s != aa_shells.end();) {
-            if (glm::distance(it_s->position, state.position) < 24.0f) {
-                player_hp -= 8;
-                it_s = aa_shells.erase(it_s);
-            } else {
-                ++it_s;
+            for (auto it_s = aa_shells.begin(); it_s != aa_shells.end();) {
+                if (glm::distance(it_s->position, state.position) < 24.0f) {
+                    player_hp -= 8;
+                    it_s = aa_shells.erase(it_s);
+                } else {
+                    ++it_s;
+                }
             }
         }
         if (player_hp <= 0) {
@@ -1191,96 +1540,119 @@ int main() {
         renderer.draw_ground_grid(3200.0f, 120.0f, 0.0f);
         renderer.draw_axes(80.0f);
         float qz = state.position.z - 220.0f;
-        WireMesh quadrant_overlay = make_quadrant_overlay_mesh(qz);
-        renderer.draw_mesh(quadrant_overlay, glm::vec3(0, 0, 0), glm::quat(1, 0, 0, 0),
-                           {0.20f, 0.45f, 0.55f});
-        for (const auto& c : clouds) {
-            renderer.draw_mesh(cloud_mesh, c.position, glm::quat(1, 0, 0, 0), {0.86f, 0.88f, 0.91f});
-        }
+        float ang_mag = glm::length(state.angular_vel);
+        float speed_mag = glm::max(glm::length(state.velocity), 1.0f);
+        float trim_mag = glm::length(g_trim_wheel_vel);
+        glm::vec3 forward = glm::normalize(glm::mat3_cast(state.orientation) * glm::vec3(0, 0, -1));
+        glm::vec3 vel_dir = glm::normalize(state.velocity);
+        float alignment = glm::clamp(glm::dot(forward, vel_dir), -1.0f, 1.0f);
+        float slip = std::acos(alignment); // 0 = on-velocity, higher = more "off"
+        float yaw_rate = std::abs(state.angular_vel.y);
+        float turn_factor = glm::clamp((yaw_rate * speed_mag) / 260.0f, 0.0f, 1.0f);
+        float g_load = glm::length(glm::cross(state.velocity, state.angular_vel)) / 9.81f;
+        g_load = glm::clamp(g_load, 0.0f, 6.0f);
+        float g_threshold = 2.0f;
+        float g_boost = (g_load > g_threshold) ? (g_load - g_threshold) * 0.14f : 0.0f;
+        float ring_target = 0.80f
+                          + glm::clamp(ang_mag / glm::radians(55.0f), 0.0f, 1.0f) * 0.22f
+                          + glm::clamp(slip / glm::radians(22.0f), 0.0f, 1.0f) * 0.55f
+                          + turn_factor * 0.20f
+                          + glm::clamp(trim_mag / TRIM_WHEEL_MAX_V, 0.0f, 1.0f) * 0.10f
+                          + g_boost;
+        ring_target = glm::clamp(ring_target, 0.75f, 1.6f);
+        static float ring_scale = 1.0f;
+        float rise_rate = 0.7f;   // expand slower
+        float fall_rate = 2.8f;   // shrink faster
+        float rate = (ring_target > ring_scale) ? rise_rate : fall_rate;
+        ring_scale = ring_scale + (ring_target - ring_scale) * (1.0f - std::exp(-rate * (float)frame_time));
+        float ring_pulse = 0.05f * std::sin((float)now * 3.2f);
+        // HUD ring/quadrant disabled
+        // clouds disabled
         glLineWidth(3.0f);
         renderer.draw_mesh_scaled(fighter_mesh, state.position, state.orientation,
                                   player_model_scale, player_usn_base);   //  translated comment
-        {
-            glm::mat3 pb = glm::mat3_cast(state.orientation);
-            glm::vec3 pl = state.position + pb * glm::vec3(-2.65f * player_model_scale, 0.22f * player_model_scale, 0.20f * player_model_scale);
-            glm::vec3 pr = state.position + pb * glm::vec3( 2.65f * player_model_scale, 0.22f * player_model_scale, 0.20f * player_model_scale);
-            float usn_outer = 0.60f * player_model_scale;
-            float usn_inner = 0.34f * player_model_scale;
-            renderer.draw_mesh_scaled(roundel_mesh, pl, state.orientation, usn_outer, player_usn_roundel_blue);
-            renderer.draw_mesh_scaled(roundel_mesh, pr, state.orientation, usn_outer, player_usn_roundel_blue);
-            renderer.draw_mesh_scaled(roundel_mesh, pl, state.orientation, usn_inner, player_usn_roundel_white);
-            renderer.draw_mesh_scaled(roundel_mesh, pr, state.orientation, usn_inner, player_usn_roundel_white);
-        }
-        for (const auto& e : enemies) {
-            // IJN late-1930s/WWII style: aged ame-iro base + red roundels.
-            renderer.draw_mesh_scaled(fighter_mesh, e.position, e.orientation,
-                                      enemy_model_scale, {0.52f, 0.50f, 0.38f});
+        if (kEnableCombat) {
+            for (const auto& e : enemies) {
+                // IJN late-1930s/WWII style: aged ame-iro base + red roundels.
+                renderer.draw_mesh_scaled(fighter_mesh, e.position, e.orientation,
+                                          enemy_model_scale, {0.52f, 0.50f, 0.38f});
 
-            glm::mat3 eb = glm::mat3_cast(e.orientation);
-            glm::vec3 el = e.position + eb * glm::vec3(-2.65f * enemy_model_scale, 0.22f * enemy_model_scale, 0.20f * enemy_model_scale);
-            glm::vec3 er = e.position + eb * glm::vec3( 2.65f * enemy_model_scale, 0.22f * enemy_model_scale, 0.20f * enemy_model_scale);
-            float roundel_scale = 0.56f * enemy_model_scale;
-            renderer.draw_mesh_scaled(roundel_mesh, el, e.orientation, roundel_scale, {0.84f, 0.10f, 0.09f});
-            renderer.draw_mesh_scaled(roundel_mesh, er, e.orientation, roundel_scale, {0.84f, 0.10f, 0.09f});
+            }
         }
         glLineWidth(1.5f);
         const glm::quat identity_q(1.0f, 0.0f, 0.0f, 0.0f);
-        for (const auto& b : bombs) {
-            renderer.draw_mesh(bomb_mesh, b.position, identity_q, {0.78f, 0.10f, 0.08f});
+        if (kEnableCombat) {
+            for (const auto& b : bombs) {
+                renderer.draw_mesh(bomb_mesh, b.position, identity_q, {0.78f, 0.10f, 0.08f});
+            }
+            for (const auto& p : bullets) {
+                renderer.draw_mesh(bullet_mesh, p.position, identity_q, {0.92f, 0.12f, 0.10f});
+            }
+            for (const auto& s : aa_shells) {
+                renderer.draw_mesh(bullet_mesh, s.position, identity_q, {0.78f, 0.18f, 0.10f});
+            }
+            for (const auto& ex : explosions) {
+                float t = 1.0f - ex.ttl_s / ex.max_ttl_s;
+                //  translated comment
+                float outer_scale = 1.0f + 0.32f * t;
+                float inner_scale = 0.72f + 0.18f * t;
+                glm::vec3 outer_color = glm::mix(glm::vec3(1.00f, 0.78f, 0.18f),
+                                                 glm::vec3(0.90f, 0.16f, 0.06f), t);
+                glm::vec3 inner_color = glm::mix(glm::vec3(1.00f, 0.95f, 0.45f),
+                                                 glm::vec3(1.00f, 0.56f, 0.12f), t);
+                renderer.draw_mesh_scaled(explosion_mesh, ex.position, identity_q, outer_scale, outer_color);
+                renderer.draw_mesh_scaled(explosion_mesh, ex.position, identity_q, inner_scale, inner_color);
+            }
         }
-        for (const auto& p : bullets) {
-            renderer.draw_mesh(bullet_mesh, p.position, identity_q, {0.92f, 0.12f, 0.10f});
+        if (kEnableCombat) {
+            std::vector<glm::vec3> enemy_positions;
+            std::vector<glm::vec3> enemy_velocities;
+            enemy_positions.reserve(enemies.size());
+            enemy_velocities.reserve(enemies.size());
+            for (const auto& e : enemies) {
+                enemy_positions.push_back(e.position);
+                enemy_velocities.push_back(e.velocity);
+            }
+            renderer.draw_radar(state.position, enemy_positions, enemy_velocities, state.velocity, 720.0f);
+            renderer.draw_world_map(state.position, enemy_positions, state.velocity, 4200.0f);
         }
-        for (const auto& s : aa_shells) {
-            renderer.draw_mesh(bullet_mesh, s.position, identity_q, {0.78f, 0.18f, 0.10f});
-        }
-        for (const auto& ex : explosions) {
-            float t = 1.0f - ex.ttl_s / ex.max_ttl_s;
-            //  translated comment
-            float outer_scale = 1.0f + 0.32f * t;
-            float inner_scale = 0.72f + 0.18f * t;
-            glm::vec3 outer_color = glm::mix(glm::vec3(1.00f, 0.78f, 0.18f),
-                                             glm::vec3(0.90f, 0.16f, 0.06f), t);
-            glm::vec3 inner_color = glm::mix(glm::vec3(1.00f, 0.95f, 0.45f),
-                                             glm::vec3(1.00f, 0.56f, 0.12f), t);
-            renderer.draw_mesh_scaled(explosion_mesh, ex.position, identity_q, outer_scale, outer_color);
-            renderer.draw_mesh_scaled(explosion_mesh, ex.position, identity_q, inner_scale, inner_color);
-        }
-        std::vector<glm::vec3> enemy_positions;
-        std::vector<glm::vec3> enemy_velocities;
-        enemy_positions.reserve(enemies.size());
-        enemy_velocities.reserve(enemies.size());
-        for (const auto& e : enemies) {
-            enemy_positions.push_back(e.position);
-            enemy_velocities.push_back(e.velocity);
-        }
-        renderer.draw_radar(state.position, enemy_positions, enemy_velocities, state.velocity, 720.0f);
-        renderer.draw_attitude_gauge(glm::degrees(state.euler_angles()),
-                                     glm::length(state.velocity),
-                                     g_game_speed_scale);
-        renderer.end_frame();
-
-        glfwSwapBuffers(window);
-
-        //  translated comment
+        // attitude gauge disabled
         glm::vec3 euler_rad = state.euler_angles();
         glm::vec3 euler_deg = glm::degrees(euler_rad);
         glm::vec3 body_vel = glm::mat3_cast(glm::inverse(state.orientation)) * state.velocity;
         float forward_speed = -body_vel.z;
         if (forward_speed < 0.1f) forward_speed = 0.1f;
-        float aoa_deg = glm::degrees(std::atan2(-body_vel.y, forward_speed));
+        float aoa_deg = glm::degrees(std::atan2(body_vel.y, forward_speed));
         float beta_deg = glm::degrees(std::atan2(body_vel.x, forward_speed));
         glm::vec3 angular_vel_deg_s = glm::degrees(state.angular_vel);
-        renderer.draw_hud(euler_deg, state.position, state.velocity, angular_vel_deg_s,
-                          command.throttle, g_game_speed_scale, aoa_deg, beta_deg);
+        // JSBSim telemetry (top-left)
+        renderer.draw_hud(euler_deg,
+                          state.position,
+                          state.velocity,
+                          angular_vel_deg_s,
+                          g_throttle_cmd,
+                          g_game_speed_scale,
+                          aoa_deg,
+                          beta_deg);
+        renderer.end_frame();
+
+        glfwSwapBuffers(window);
 
         char title[256];
-        std::snprintf(title, sizeof(title),
-                      "Fighter Sim | GAME | Q%d | HP %d | Score %d | GS %.0f%% | Alt %.0f m | V %.0f m/s | Vy %.1f m/s | AoA %.1f deg | Thr %.0f%% | Bullets %zu | Bombs %zu | AA %zu",
-                      g_motion_quadrant, player_hp, score,
-                      g_game_speed_scale * 100.0f, state.position.y, glm::length(state.velocity), state.velocity.y,
-                      aoa_deg, command.throttle * 100.0f,
-                      bullets.size(), bombs.size(), aa_shells.size());
+        if (kEnableCombat) {
+            std::snprintf(title, sizeof(title),
+                          "Fighter Sim | GAME | HP %d | Score %d | GS %.0f%% | PosXY(%.0f,%.0f) | Alt %.0f m | V %.0f m/s | Vy %.1f m/s | AoA %.1f deg | Thr %.0f%% | Bullets %zu | Bombs %zu | AA %zu",
+                          player_hp, score,
+                          g_game_speed_scale * 100.0f, g_trim_origin.x, g_trim_origin.y,
+                          state.position.y, glm::length(state.velocity), state.velocity.y,
+                          aoa_deg, g_throttle_cmd * 100.0f,
+                          bullets.size(), bombs.size(), aa_shells.size());
+        } else {
+            std::snprintf(title, sizeof(title),
+                          "Fighter Sim | JSBSim Minimal | Alt %.0f m | V %.0f m/s | Vy %.1f m/s | AoA %.1f deg | Thr %.0f%%",
+                          state.position.y, glm::length(state.velocity), state.velocity.y,
+                          aoa_deg, g_throttle_cmd * 100.0f);
+        }
         glfwSetWindowTitle(window, title);
     }
 
@@ -1288,6 +1660,10 @@ int main() {
         printf("Flight ended: crashed.\n");
     } else {
         printf("\nBye.\n");
+    }
+    if (csv_log.is_open()) {
+        csv_log.close();
+        printf("JSBSim logs written to build/logs/*.csv\n");
     }
     glfwDestroyWindow(window);
     glfwTerminate();

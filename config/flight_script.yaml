@@ -1,0 +1,63 @@
+run_mode: single
+model: fgdata:c172p
+models: fgdata:c172p
+initial:
+  altitude_m: 0
+  speed_mps: 0
+phases:
+  - name: takeoff_roll
+    duration_s: 10
+    throttle: 1.0
+    elevator: 0.03
+    aileron: 0.0
+    rudder: 0.0
+    flap: 0.2
+    gear: 1.0
+  - name: flap_retract
+    duration_s: 8
+    throttle: 0.9
+    elevator: 0.02
+    aileron: 0.0
+    rudder: 0.0
+    flap: 0.0
+    gear: 1.0
+  - name: climb
+    duration_s: 60
+    throttle: 0.85
+    elevator: 0.03
+    aileron: 0.0
+    rudder: 0.0
+    flap: 0.0
+    gear: 1.0
+  - name: cruise
+    duration_s: 120
+    throttle: 0.65
+    elevator: 0.0
+    aileron: 0.0
+    rudder: 0.0
+    flap: 0.0
+    gear: 1.0
+  - name: descent
+    duration_s: 80
+    throttle: 0.35
+    elevator: -0.015
+    aileron: 0.0
+    rudder: 0.0
+    flap: 0.1
+    gear: 1.0
+  - name: approach
+    duration_s: 60
+    throttle: 0.28
+    elevator: 0.01
+    aileron: 0.0
+    rudder: 0.0
+    flap: 0.3
+    gear: 1.0
+  - name: landing
+    duration_s: 20
+    throttle: 0.18
+    elevator: 0.02
+    aileron: 0.0
+    rudder: 0.0
+    flap: 0.4
+    gear: 1.0

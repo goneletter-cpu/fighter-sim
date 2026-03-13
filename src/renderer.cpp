@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cmath>
 #include <vector>
+#include <string>
 
 // ── Shader translated comment
 
@@ -246,14 +247,124 @@ void Renderer::draw_hud(const glm::vec3& euler_deg,
                          float beta_deg)
 {
     float airspeed = glm::length(velocity);
-    printf("\rP:%6.1f R:%6.1f Y:%6.1f deg | Alt:%8.1fm V:%6.1fm/s Vy:%6.1fm/s | AoA:%6.1f Beta:%6.1f deg | p:%6.1f q:%6.1f r:%6.1f deg/s | Thr:%5.1f%% GS:%5.1f%% | Pos:(%7.1f,%7.1f,%7.1f)   ",
-           euler_deg.x, euler_deg.z, euler_deg.y,
-           position.y, airspeed, velocity.y,
-           aoa_deg, beta_deg,
-           angular_vel_deg_s.x, angular_vel_deg_s.y, angular_vel_deg_s.z,
-           throttle * 100.0f, game_speed_scale * 100.0f,
-           position.x, position.y, position.z);
-    fflush(stdout);
+
+    glm::mat4 saved_view = view_;
+    glm::mat4 saved_proj = projection_;
+
+    view_ = glm::mat4(1.0f);
+    projection_ = glm::ortho(0.0f, (float)width_, 0.0f, (float)height_, -1.0f, 1.0f);
+    glUniformMatrix4fv(glGetUniformLocation(shader_program_, "view"), 1, GL_FALSE, glm::value_ptr(view_));
+    glUniformMatrix4fv(glGetUniformLocation(shader_program_, "projection"), 1, GL_FALSE, glm::value_ptr(projection_));
+    glm::mat4 identity(1.0f);
+    glUniformMatrix4fv(glGetUniformLocation(shader_program_, "model"), 1, GL_FALSE, glm::value_ptr(identity));
+
+    auto draw_lines = [&](const std::vector<glm::vec3>& lines, const glm::vec3& color) {
+        if (lines.empty()) return;
+        glUniform3fv(glGetUniformLocation(shader_program_, "color"), 1, glm::value_ptr(color));
+        glBindVertexArray(vao_);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+        glBufferData(GL_ARRAY_BUFFER,
+                     lines.size() * sizeof(glm::vec3),
+                     lines.data(),
+                     GL_DYNAMIC_DRAW);
+        glDrawArrays(GL_LINES, 0, (int)lines.size());
+        glBindVertexArray(0);
+    };
+
+    auto add_seg = [](float x0, float y0, float x1, float y1, std::vector<glm::vec3>& out) {
+        out.push_back({x0, y0, 0.0f});
+        out.push_back({x1, y1, 0.0f});
+    };
+
+    auto add_char = [&](char c, float x, float y, float s, std::vector<glm::vec3>& out) {
+        float w = s;
+        float h = s * 1.6f;
+        float x0 = x;
+        float x1 = x + w;
+        float y0 = y;
+        float y1 = y + h;
+        float ym = y + h * 0.5f;
+
+        auto seg = [&](char id) {
+            switch (id) {
+                case 'A': add_seg(x0, y1, x1, y1, out); break;
+                case 'B': add_seg(x1, y1, x1, ym, out); break;
+                case 'C': add_seg(x1, ym, x1, y0, out); break;
+                case 'D': add_seg(x0, y0, x1, y0, out); break;
+                case 'E': add_seg(x0, ym, x0, y0, out); break;
+                case 'F': add_seg(x0, y1, x0, ym, out); break;
+                case 'G': add_seg(x0, ym, x1, ym, out); break;
+                default: break;
+            }
+        };
+
+        switch (c) {
+            case '0': seg('A'); seg('B'); seg('C'); seg('D'); seg('E'); seg('F'); break;
+            case '1': seg('B'); seg('C'); break;
+            case '2': seg('A'); seg('B'); seg('G'); seg('E'); seg('D'); break;
+            case '3': seg('A'); seg('B'); seg('G'); seg('C'); seg('D'); break;
+            case '4': seg('F'); seg('G'); seg('B'); seg('C'); break;
+            case '5': seg('A'); seg('F'); seg('G'); seg('C'); seg('D'); break;
+            case '6': seg('A'); seg('F'); seg('G'); seg('E'); seg('C'); seg('D'); break;
+            case '7': seg('A'); seg('B'); seg('C'); break;
+            case '8': seg('A'); seg('B'); seg('C'); seg('D'); seg('E'); seg('F'); seg('G'); break;
+            case '9': seg('A'); seg('B'); seg('C'); seg('D'); seg('F'); seg('G'); break;
+            case 'A': seg('A'); seg('B'); seg('C'); seg('E'); seg('F'); seg('G'); break;
+            case 'B': seg('F'); seg('E'); seg('G'); seg('A'); seg('D'); seg('B'); seg('C'); break;
+            case 'D': seg('A'); seg('B'); seg('C'); seg('D'); seg('E'); seg('F'); break;
+            case 'E': seg('A'); seg('F'); seg('G'); seg('E'); seg('D'); break;
+            case 'H': seg('F'); seg('E'); seg('G'); seg('B'); seg('C'); break;
+            case 'L': seg('F'); seg('E'); seg('D'); break;
+            case 'O': seg('A'); seg('B'); seg('C'); seg('D'); seg('E'); seg('F'); break;
+            case 'P': seg('A'); seg('B'); seg('F'); seg('G'); seg('E'); break;
+            case 'R': seg('A'); seg('B'); seg('F'); seg('G'); seg('E'); add_seg(x0, ym, x1, y0, out); break;
+            case 'S': seg('A'); seg('F'); seg('G'); seg('C'); seg('D'); break;
+            case 'T': seg('A'); add_seg(x0 + w * 0.5f, y1, x0 + w * 0.5f, y0, out); break;
+            case 'V': add_seg(x0, y1, x0 + w * 0.5f, y0, out); add_seg(x1, y1, x0 + w * 0.5f, y0, out); break;
+            case 'Y': add_seg(x0, y1, x0 + w * 0.5f, ym, out); add_seg(x1, y1, x0 + w * 0.5f, ym, out); add_seg(x0 + w * 0.5f, ym, x0 + w * 0.5f, y0, out); break;
+            case '%': add_seg(x0, y1, x1, y0, out); add_seg(x0 + w * 0.15f, y1, x0 + w * 0.35f, y1, out); add_seg(x1 - w * 0.35f, y0, x1 - w * 0.15f, y0, out); break;
+            case '-': add_seg(x0, ym, x1, ym, out); break;
+            case '.': add_seg(x1 - w * 0.1f, y0, x1, y0, out); break;
+            case ':': add_seg(x0 + w * 0.5f, y0 + h * 0.3f, x0 + w * 0.5f, y0 + h * 0.3f, out); add_seg(x0 + w * 0.5f, y0 + h * 0.7f, x0 + w * 0.5f, y0 + h * 0.7f, out); break;
+            default: break;
+        }
+    };
+
+    auto draw_text = [&](const std::string& text, float x, float y, float size, const glm::vec3& color) {
+        std::vector<glm::vec3> lines;
+        float cursor = x;
+        for (char c : text) {
+            if (c == ' ') {
+                cursor += size * 0.8f;
+                continue;
+            }
+            add_char((char)std::toupper((unsigned char)c), cursor, y, size, lines);
+            cursor += size * 1.1f;
+        }
+        draw_lines(lines, color);
+    };
+
+    char line1[128];
+    char line2[128];
+    char line3[128];
+    std::snprintf(line1, sizeof(line1), "ALT %.0f  SPD %.1f  VY %.1f", position.y, airspeed, velocity.y);
+    std::snprintf(line2, sizeof(line2), "AOA %.1f  BETA %.1f  P %.1f Q %.1f R %.1f",
+                  aoa_deg, beta_deg, angular_vel_deg_s.x, angular_vel_deg_s.y, angular_vel_deg_s.z);
+    std::snprintf(line3, sizeof(line3), "THR %.0f%%  GS %.0f%%", throttle * 100.0f, game_speed_scale * 100.0f);
+
+    const float size = 8.0f;
+    const float x = 12.0f;
+    float y = height_ - 20.0f;
+    draw_text(line1, x, y, size, {0.05f, 0.35f, 0.12f});
+    y -= size * 2.2f;
+    draw_text(line2, x, y, size, {0.05f, 0.35f, 0.12f});
+    y -= size * 2.2f;
+    draw_text(line3, x, y, size, {0.05f, 0.35f, 0.12f});
+
+    view_ = saved_view;
+    projection_ = saved_proj;
+    glUniformMatrix4fv(glGetUniformLocation(shader_program_, "view"), 1, GL_FALSE, glm::value_ptr(view_));
+    glUniformMatrix4fv(glGetUniformLocation(shader_program_, "projection"), 1, GL_FALSE, glm::value_ptr(projection_));
 }
 
 void Renderer::draw_radar(const glm::vec3& player_pos,
@@ -290,7 +401,7 @@ void Renderer::draw_radar(const glm::vec3& player_pos,
     const float arc_start = glm::half_pi<float>() - sector_half;
     const float arc_end = glm::half_pi<float>() + sector_half;
 
-    glm::vec2 fwd2(player_velocity.x, player_velocity.y);
+    glm::vec2 fwd2(player_velocity.x, -player_velocity.z);
     if (glm::length(fwd2) < 1e-3f) fwd2 = glm::vec2(0.0f, 1.0f);
     else fwd2 = glm::normalize(fwd2);
     float fwd_ang = std::atan2(fwd2.y, fwd2.x);
@@ -419,7 +530,7 @@ void Renderer::draw_radar(const glm::vec3& player_pos,
     float nearest_d = 1e9f;
     for (size_t i = 0; i < enemy_positions.size(); ++i) {
         const auto& ep = enemy_positions[i];
-        glm::vec2 rel(ep.x - player_pos.x, ep.y - player_pos.y);
+        glm::vec2 rel(ep.x - player_pos.x, -(ep.z - player_pos.z));
         float d = glm::length(rel);
         if (d > radar_range_world) continue;
         float lx = rel.x * std::cos(rot) - rel.y * std::sin(rot);
@@ -440,8 +551,8 @@ void Renderer::draw_radar(const glm::vec3& player_pos,
         glm::vec2 vr(0.0f);
         if (i < enemy_velocities.size()) {
             glm::vec3 vrel3 = enemy_velocities[i] - player_velocity;
-            float rvx = vrel3.x * std::cos(rot) - vrel3.y * std::sin(rot);
-            float rvy = vrel3.x * std::sin(rot) + vrel3.y * std::cos(rot);
+            float rvx = vrel3.x * std::cos(rot) + vrel3.z * std::sin(rot);
+            float rvy = vrel3.x * std::sin(rot) - vrel3.z * std::cos(rot);
             vr = glm::vec2(rvx, rvy);
         }
         float vlen = glm::length(vr);
@@ -500,6 +611,79 @@ void Renderer::draw_radar(const glm::vec3& player_pos,
         {center.x + 4.5f, center.y + r_px - 2.0f, 0.0f}
     };
     draw_lines(heading, glm::vec3(0.40f, 0.85f, 0.42f));
+
+    view_ = saved_view;
+    projection_ = saved_proj;
+    glUniformMatrix4fv(glGetUniformLocation(shader_program_, "view"), 1, GL_FALSE, glm::value_ptr(view_));
+    glUniformMatrix4fv(glGetUniformLocation(shader_program_, "projection"), 1, GL_FALSE, glm::value_ptr(projection_));
+}
+
+void Renderer::draw_world_map(const glm::vec3& player_pos,
+                              const std::vector<glm::vec3>& enemy_positions,
+                              const glm::vec3& player_velocity,
+                              float map_range_world) {
+    if (map_range_world <= 1.0f) return;
+
+    glm::mat4 saved_view = view_;
+    glm::mat4 saved_proj = projection_;
+    view_ = glm::mat4(1.0f);
+    projection_ = glm::ortho(0.0f, (float)width_, 0.0f, (float)height_, -1.0f, 1.0f);
+    glUniformMatrix4fv(glGetUniformLocation(shader_program_, "view"), 1, GL_FALSE, glm::value_ptr(view_));
+    glUniformMatrix4fv(glGetUniformLocation(shader_program_, "projection"), 1, GL_FALSE, glm::value_ptr(projection_));
+    glm::mat4 identity(1.0f);
+    glUniformMatrix4fv(glGetUniformLocation(shader_program_, "model"), 1, GL_FALSE, glm::value_ptr(identity));
+
+    auto draw_lines = [&](const std::vector<glm::vec3>& lines, const glm::vec3& color) {
+        if (lines.empty()) return;
+        glUniform3fv(glGetUniformLocation(shader_program_, "color"), 1, glm::value_ptr(color));
+        glBindVertexArray(vao_);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+        glBufferData(GL_ARRAY_BUFFER, lines.size() * sizeof(glm::vec3), lines.data(), GL_DYNAMIC_DRAW);
+        glDrawArrays(GL_LINES, 0, (int)lines.size());
+        glBindVertexArray(0);
+    };
+
+    const glm::vec2 center(250.0f, 112.0f);
+    const float half = 52.0f;
+
+    std::vector<glm::vec3> frame = {
+        {center.x - half, center.y - half, 0}, {center.x + half, center.y - half, 0},
+        {center.x + half, center.y - half, 0}, {center.x + half, center.y + half, 0},
+        {center.x + half, center.y + half, 0}, {center.x - half, center.y + half, 0},
+        {center.x - half, center.y + half, 0}, {center.x - half, center.y - half, 0},
+        {center.x - half, center.y, 0}, {center.x + half, center.y, 0},
+        {center.x, center.y - half, 0}, {center.x, center.y + half, 0}
+    };
+    draw_lines(frame, glm::vec3(0.20f, 0.32f, 0.36f));
+
+    std::vector<glm::vec3> enemy_pts;
+    enemy_pts.reserve(enemy_positions.size() * 4);
+    for (const auto& ep : enemy_positions) {
+        glm::vec2 rel(ep.x - player_pos.x, -(ep.z - player_pos.z));
+        rel /= map_range_world;
+        rel = glm::clamp(rel, glm::vec2(-1.0f), glm::vec2(1.0f));
+        glm::vec2 p = center + rel * half;
+        float s = 2.2f;
+        enemy_pts.push_back({p.x - s, p.y, 0});
+        enemy_pts.push_back({p.x + s, p.y, 0});
+        enemy_pts.push_back({p.x, p.y - s, 0});
+        enemy_pts.push_back({p.x, p.y + s, 0});
+    }
+    draw_lines(enemy_pts, glm::vec3(0.84f, 0.16f, 0.14f));
+
+    glm::vec2 fwd(player_velocity.x, -player_velocity.z);
+    if (glm::length(fwd) < 1e-3f) fwd = glm::vec2(0.0f, 1.0f);
+    else fwd = glm::normalize(fwd);
+    glm::vec2 right(fwd.y, -fwd.x);
+    std::vector<glm::vec3> player = {
+        {center.x + fwd.x * 7.0f, center.y + fwd.y * 7.0f, 0.0f},
+        {center.x - fwd.x * 4.5f + right.x * 3.5f, center.y - fwd.y * 4.5f + right.y * 3.5f, 0.0f},
+        {center.x + fwd.x * 7.0f, center.y + fwd.y * 7.0f, 0.0f},
+        {center.x - fwd.x * 4.5f - right.x * 3.5f, center.y - fwd.y * 4.5f - right.y * 3.5f, 0.0f},
+        {center.x - fwd.x * 4.5f + right.x * 3.5f, center.y - fwd.y * 4.5f + right.y * 3.5f, 0.0f},
+        {center.x - fwd.x * 4.5f - right.x * 3.5f, center.y - fwd.y * 4.5f - right.y * 3.5f, 0.0f}
+    };
+    draw_lines(player, glm::vec3(0.18f, 0.52f, 0.90f));
 
     view_ = saved_view;
     projection_ = saved_proj;
@@ -657,17 +841,21 @@ WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {
     WireMesh m;
     gear_deploy = glm::clamp(gear_deploy, 0.0f, 1.0f);
     flap_deploy = glm::clamp(flap_deploy, 0.0f, 1.0f);
-    //  translated comment
-    const std::vector<float> zs = {-6.8f, -4.2f, -1.2f, 2.0f, 5.2f};
-    const std::vector<float> rx = {0.12f, 0.90f, 1.05f, 0.85f, 0.45f};
-    const std::vector<float> ry = {0.12f, 0.95f, 1.08f, 0.90f, 0.50f};
-    const int ring_pts = 8;
+    // More detailed C172-style wireframe
+    const std::vector<float> zs = {
+        -7.4f, -6.3f, -4.8f, -3.1f, -1.2f, 0.8f, 2.6f, 4.3f, 6.0f, 7.4f
+    };
+    const std::vector<float> rx = {
+        0.06f, 0.28f, 0.55f, 0.78f, 0.88f, 0.82f, 0.70f, 0.54f, 0.32f, 0.12f
+    };
+    const std::vector<float> ry = {
+        0.06f, 0.32f, 0.65f, 0.92f, 0.98f, 0.92f, 0.80f, 0.62f, 0.36f, 0.14f
+    };
+    const int ring_pts = 14;
 
-    //  translated comment
-    m.vertices.push_back({0.0f, 0.0f, -7.5f}); // 0 nose
-    m.vertices.push_back({0.0f, 0.0f,  6.2f}); // 1 tail
+    m.vertices.push_back({0.0f, 0.02f, -7.9f}); // 0 nose
+    m.vertices.push_back({0.0f, 0.08f,  8.2f}); // 1 tail cone
 
-    //  translated comment
     const int ring_start = (int)m.vertices.size();
     for (size_t r = 0; r < zs.size(); ++r) {
         for (int i = 0; i < ring_pts; ++i) {
@@ -682,23 +870,24 @@ WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {
 
     auto ring_idx = [&](int r, int i) { return ring_start + r * ring_pts + (i % ring_pts); };
 
-    //  translated comment
+    // Hide fuselage ring circles around the wing region to avoid circular artifacts on the wing.
+    const float ring_hide_min_z = -0.2f;
+    const float ring_hide_max_z = 2.8f;
     for (int r = 0; r < (int)zs.size(); ++r) {
+        if (zs[r] >= ring_hide_min_z && zs[r] <= ring_hide_max_z) {
+            continue;
+        }
         for (int i = 0; i < ring_pts; ++i) {
             m.line_indices.push_back(ring_idx(r, i));
             m.line_indices.push_back(ring_idx(r, i + 1));
         }
     }
-
-    //  translated comment
     for (int r = 0; r < (int)zs.size() - 1; ++r) {
         for (int i = 0; i < ring_pts; ++i) {
             m.line_indices.push_back(ring_idx(r, i));
             m.line_indices.push_back(ring_idx(r + 1, i));
         }
     }
-
-    //  translated comment
     for (int i = 0; i < ring_pts; ++i) {
         m.line_indices.push_back(0);
         m.line_indices.push_back(ring_idx(0, i));
@@ -706,75 +895,108 @@ WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {
         m.line_indices.push_back(ring_idx((int)zs.size() - 1, i));
     }
 
-    //  translated comment
-    const unsigned int wing_root_l = (unsigned int)m.vertices.size(); m.vertices.push_back({-0.9f, -0.05f, -0.6f});
-    const unsigned int wing_root_r = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.9f, -0.05f, -0.6f});
-    const unsigned int wing_tip_l  = (unsigned int)m.vertices.size(); m.vertices.push_back({-4.2f, -0.12f,  0.9f});
-    const unsigned int wing_tip_r  = (unsigned int)m.vertices.size(); m.vertices.push_back({ 4.2f, -0.12f,  0.9f});
-    const unsigned int wing_back_l = (unsigned int)m.vertices.size(); m.vertices.push_back({-1.4f, -0.08f,  1.5f});
-    const unsigned int wing_back_r = (unsigned int)m.vertices.size(); m.vertices.push_back({ 1.4f, -0.08f,  1.5f});
+    // High-wing layout (C172-like) with dihedral and struts
+    const float wing_y = 0.78f;
+    const float wing_z = 0.4f;
+    const unsigned int wing_root_l = (unsigned int)m.vertices.size(); m.vertices.push_back({-0.95f, wing_y, wing_z});
+    const unsigned int wing_root_r = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.95f, wing_y, wing_z});
+    const unsigned int wing_tip_l  = (unsigned int)m.vertices.size(); m.vertices.push_back({-5.2f, wing_y + 0.22f,  1.4f});
+    const unsigned int wing_tip_r  = (unsigned int)m.vertices.size(); m.vertices.push_back({ 5.2f, wing_y + 0.22f,  1.4f});
+    const unsigned int wing_back_l = (unsigned int)m.vertices.size(); m.vertices.push_back({-1.6f, wing_y - 0.05f,  2.6f});
+    const unsigned int wing_back_r = (unsigned int)m.vertices.size(); m.vertices.push_back({ 1.6f, wing_y - 0.05f,  2.6f});
+    const unsigned int wing_mid_l  = (unsigned int)m.vertices.size(); m.vertices.push_back({-3.1f, wing_y + 0.14f,  1.2f});
+    const unsigned int wing_mid_r  = (unsigned int)m.vertices.size(); m.vertices.push_back({ 3.1f, wing_y + 0.14f,  1.2f});
 
     m.line_indices.insert(m.line_indices.end(), {
-        wing_root_l, wing_tip_l, wing_tip_l, wing_back_l, wing_back_l, wing_root_l,
-        wing_root_r, wing_tip_r, wing_tip_r, wing_back_r, wing_back_r, wing_root_r,
-        wing_root_l, wing_root_r
+        wing_root_l, wing_mid_l, wing_mid_l, wing_tip_l, wing_tip_l, wing_back_l, wing_back_l, wing_root_l,
+        wing_root_r, wing_mid_r, wing_mid_r, wing_tip_r, wing_tip_r, wing_back_r, wing_back_r, wing_root_r,
+        wing_root_l, wing_root_r, wing_mid_l, wing_mid_r
     });
 
-    //  translated comment
-    const unsigned int tail_l = (unsigned int)m.vertices.size(); m.vertices.push_back({-1.9f, 0.06f, 5.0f});
-    const unsigned int tail_r = (unsigned int)m.vertices.size(); m.vertices.push_back({ 1.9f, 0.06f, 5.0f});
-    const unsigned int tail_c = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.0f, 0.08f, 4.6f});
-    const unsigned int fin_t  = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.0f, 1.45f, 5.05f});
+    // Wing struts
+    const unsigned int strut_l_fuse = (unsigned int)m.vertices.size(); m.vertices.push_back({-0.65f, 0.18f, 1.2f});
+    const unsigned int strut_r_fuse = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.65f, 0.18f, 1.2f});
+    const unsigned int strut_l_wing = (unsigned int)m.vertices.size(); m.vertices.push_back({-3.0f, wing_y - 0.10f, 1.3f});
+    const unsigned int strut_r_wing = (unsigned int)m.vertices.size(); m.vertices.push_back({ 3.0f, wing_y - 0.10f, 1.3f});
+    m.line_indices.insert(m.line_indices.end(), {
+        strut_l_fuse, strut_l_wing,
+        strut_r_fuse, strut_r_wing
+    });
+
+    // Cabin windows (simple outline)
+    const unsigned int win_l_fwd = (unsigned int)m.vertices.size(); m.vertices.push_back({-0.55f, 0.45f, -1.3f});
+    const unsigned int win_l_aft = (unsigned int)m.vertices.size(); m.vertices.push_back({-0.85f, 0.45f,  0.6f});
+    const unsigned int win_l_top = (unsigned int)m.vertices.size(); m.vertices.push_back({-0.75f, 0.70f, -0.2f});
+    const unsigned int win_r_fwd = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.55f, 0.45f, -1.3f});
+    const unsigned int win_r_aft = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.85f, 0.45f,  0.6f});
+    const unsigned int win_r_top = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.75f, 0.70f, -0.2f});
+    m.line_indices.insert(m.line_indices.end(), {
+        win_l_fwd, win_l_top, win_l_top, win_l_aft, win_l_aft, win_l_fwd,
+        win_r_fwd, win_r_top, win_r_top, win_r_aft, win_r_aft, win_r_fwd
+    });
+
+    // Engine cowl ring (nose)
+    const int cowl_start = (int)m.vertices.size();
+    const int cowl_pts = 12;
+    const float cowl_z = -6.8f;
+    const float cowl_rx = 0.45f;
+    const float cowl_ry = 0.48f;
+    for (int i = 0; i < cowl_pts; ++i) {
+        float t = (2.0f * 3.1415926f * i) / cowl_pts;
+        m.vertices.push_back({cowl_rx * std::cos(t), cowl_ry * std::sin(t) + 0.05f, cowl_z});
+    }
+    for (int i = 0; i < cowl_pts; ++i) {
+        m.line_indices.push_back(cowl_start + i);
+        m.line_indices.push_back(cowl_start + ((i + 1) % cowl_pts));
+    }
+
+    // Tailplane + fin (smaller than fighter)
+    const unsigned int tail_l = (unsigned int)m.vertices.size(); m.vertices.push_back({-1.9f, 0.28f, 6.1f});
+    const unsigned int tail_r = (unsigned int)m.vertices.size(); m.vertices.push_back({ 1.9f, 0.28f, 6.1f});
+    const unsigned int tail_c = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.0f, 0.30f, 5.6f});
+    const unsigned int fin_t  = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.0f, 1.55f, 6.4f});
+    const unsigned int fin_b  = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.0f, 0.35f, 5.7f});
 
     m.line_indices.insert(m.line_indices.end(), {
         tail_c, tail_l, tail_c, tail_r, tail_l, tail_r,
-        tail_c, fin_t
+        fin_b, fin_t, tail_c, fin_b
     });
 
-    //  translated comment
+    // Simple fixed gear (C172 is fixed gear)
     if (gear_deploy > 0.001f) {
-        float gy = -0.30f - 0.92f * gear_deploy;
-        float gz_front = -4.55f + 0.40f * (1.0f - gear_deploy);
-        float gz_main = 0.95f + 0.22f * (1.0f - gear_deploy);
+        float gy = -0.35f - 0.25f * gear_deploy;
+        const unsigned int ng_top = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.00f, -0.08f, -4.9f});
+        const unsigned int ng_bot = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.00f, gy,   -4.5f});
+        const unsigned int ng_wl  = (unsigned int)m.vertices.size(); m.vertices.push_back({-0.22f * gear_deploy, gy - 0.04f, -4.45f});
+        const unsigned int ng_wr  = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.22f * gear_deploy, gy - 0.04f, -4.45f});
 
-        const unsigned int ng_top = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.00f, -0.55f, -4.55f});
-        const unsigned int ng_bot = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.00f, gy,   gz_front});
-        const unsigned int ng_wl  = (unsigned int)m.vertices.size(); m.vertices.push_back({-0.24f * gear_deploy, gy - 0.04f, gz_front - 0.05f});
-        const unsigned int ng_wr  = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.24f * gear_deploy, gy - 0.04f, gz_front - 0.05f});
-
-        const unsigned int lg_l_top = (unsigned int)m.vertices.size(); m.vertices.push_back({-1.05f, -0.36f,  0.95f});
-        const unsigned int lg_l_bot = (unsigned int)m.vertices.size(); m.vertices.push_back({-1.26f, gy, gz_main});
-        const unsigned int lg_l_w0  = (unsigned int)m.vertices.size(); m.vertices.push_back({-1.55f * gear_deploy, gy - 0.08f, gz_main});
-        const unsigned int lg_l_w1  = (unsigned int)m.vertices.size(); m.vertices.push_back({-0.97f * gear_deploy, gy - 0.08f, gz_main});
-
-        const unsigned int lg_r_top = (unsigned int)m.vertices.size(); m.vertices.push_back({ 1.05f, -0.36f,  0.95f});
-        const unsigned int lg_r_bot = (unsigned int)m.vertices.size(); m.vertices.push_back({ 1.26f, gy, gz_main});
-        const unsigned int lg_r_w0  = (unsigned int)m.vertices.size(); m.vertices.push_back({ 1.55f * gear_deploy, gy - 0.08f, gz_main});
-        const unsigned int lg_r_w1  = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.97f * gear_deploy, gy - 0.08f, gz_main});
+        const unsigned int lg_l_top = (unsigned int)m.vertices.size(); m.vertices.push_back({-1.05f, -0.02f,  1.6f});
+        const unsigned int lg_l_bot = (unsigned int)m.vertices.size(); m.vertices.push_back({-1.25f, gy, 1.9f});
+        const unsigned int lg_r_top = (unsigned int)m.vertices.size(); m.vertices.push_back({ 1.05f, -0.02f,  1.6f});
+        const unsigned int lg_r_bot = (unsigned int)m.vertices.size(); m.vertices.push_back({ 1.25f, gy, 1.9f});
+        const unsigned int lg_l_brace = (unsigned int)m.vertices.size(); m.vertices.push_back({-0.85f, -0.12f,  1.4f});
+        const unsigned int lg_r_brace = (unsigned int)m.vertices.size(); m.vertices.push_back({ 0.85f, -0.12f,  1.4f});
 
         m.line_indices.insert(m.line_indices.end(), {
             ng_top, ng_bot, ng_bot, ng_wl, ng_bot, ng_wr, ng_wl, ng_wr,
-            lg_l_top, lg_l_bot, lg_l_bot, lg_l_w0, lg_l_bot, lg_l_w1, lg_l_w0, lg_l_w1,
-            lg_r_top, lg_r_bot, lg_r_bot, lg_r_w0, lg_r_bot, lg_r_w1, lg_r_w0, lg_r_w1
+            lg_l_top, lg_l_bot, lg_r_top, lg_r_bot,
+            lg_l_top, lg_l_brace, lg_l_brace, lg_l_bot,
+            lg_r_top, lg_r_brace, lg_r_brace, lg_r_bot
         });
     }
 
-    //  translated comment
+    // Flaps (subtle)
     {
-        float fdy = -0.06f - 0.22f * flap_deploy;
-        float fdz = 0.04f + 0.20f * flap_deploy;
-        const unsigned int flap_l_i0 = (unsigned int)m.vertices.size(); m.vertices.push_back({-1.40f, fdy, 1.26f + fdz});
-        const unsigned int flap_l_i1 = (unsigned int)m.vertices.size(); m.vertices.push_back({-2.35f, fdy - 0.02f, 1.10f + fdz});
-        const unsigned int flap_l_o0 = (unsigned int)m.vertices.size(); m.vertices.push_back({-2.90f, fdy - 0.03f, 0.98f + fdz});
-        const unsigned int flap_l_o1 = (unsigned int)m.vertices.size(); m.vertices.push_back({-3.95f, fdy - 0.05f, 0.84f + fdz});
-        const unsigned int flap_r_i0 = (unsigned int)m.vertices.size(); m.vertices.push_back({ 1.40f, fdy, 1.26f + fdz});
-        const unsigned int flap_r_i1 = (unsigned int)m.vertices.size(); m.vertices.push_back({ 2.35f, fdy - 0.02f, 1.10f + fdz});
-        const unsigned int flap_r_o0 = (unsigned int)m.vertices.size(); m.vertices.push_back({ 2.90f, fdy - 0.03f, 0.98f + fdz});
-        const unsigned int flap_r_o1 = (unsigned int)m.vertices.size(); m.vertices.push_back({ 3.95f, fdy - 0.05f, 0.84f + fdz});
+        float fdy = wing_y - 0.10f - 0.18f * flap_deploy;
+        float fdz = 0.05f + 0.18f * flap_deploy;
+        const unsigned int flap_l_i0 = (unsigned int)m.vertices.size(); m.vertices.push_back({-1.15f, fdy, 1.45f + fdz});
+        const unsigned int flap_l_o0 = (unsigned int)m.vertices.size(); m.vertices.push_back({-3.40f, fdy - 0.03f, 1.05f + fdz});
+        const unsigned int flap_r_i0 = (unsigned int)m.vertices.size(); m.vertices.push_back({ 1.15f, fdy, 1.45f + fdz});
+        const unsigned int flap_r_o0 = (unsigned int)m.vertices.size(); m.vertices.push_back({ 3.40f, fdy - 0.03f, 1.05f + fdz});
 
         m.line_indices.insert(m.line_indices.end(), {
-            flap_l_i0, flap_l_i1, flap_l_o0, flap_l_o1, flap_l_i1, flap_l_o0,
-            flap_r_i0, flap_r_i1, flap_r_o0, flap_r_o1, flap_r_i1, flap_r_o0
+            flap_l_i0, flap_l_o0,
+            flap_r_i0, flap_r_o0
         });
     }
 

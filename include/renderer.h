@@ -51,6 +51,10 @@ public:
                     const std::vector<glm::vec3>& enemy_velocities,
                     const glm::vec3& player_velocity,
                     float radar_range_world = 1200.0f);
+    void draw_world_map(const glm::vec3& player_pos,
+                        const std::vector<glm::vec3>& enemy_positions,
+                        const glm::vec3& player_velocity,
+                        float map_range_world = 4200.0f);
     void draw_attitude_gauge(const glm::vec3& euler_deg,
                              float airspeed_mps,
                              float game_speed_scale);

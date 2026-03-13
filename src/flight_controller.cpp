@@ -5,9 +5,9 @@
 #include <cmath>
 
 FlightController::FlightController()
-    : pitch_pid(1.1f, 0.05f, 0.25f, 0.45f)
-    , roll_pid (1.3f, 0.05f, 0.22f, 0.45f)
-    , yaw_pid  (0.7f, 0.03f, 0.18f, 0.35f)
+    : pitch_rate_pid(0.85f, 0.08f, 0.12f, 1.0f)
+    , roll_rate_pid (0.95f, 0.06f, 0.10f, 1.0f)
+    , yaw_rate_pid  (0.65f, 0.04f, 0.08f, 1.0f)
 {}
 
 ControlInput FlightController::update(const AircraftState& state,
@@ -30,10 +30,16 @@ ControlInput FlightController::update(const AircraftState& state,
                             glm::dot(up_ref, up));
     float pitch = std::asin(glm::clamp(forward.y, -1.0f, 1.0f));
 
+    float pitch_rate_cmd = glm::clamp((cmd.pitch_rad - pitch) * pitch_att_gain,
+                                      -pitch_rate_limit, pitch_rate_limit);
+    float roll_rate_cmd  = glm::clamp((cmd.roll_rad - roll) * roll_att_gain,
+                                      -roll_rate_limit, roll_rate_limit);
+    float yaw_rate_cmd   = glm::clamp(cmd.yaw_rate_rad_s, -yaw_rate_limit, yaw_rate_limit);
+
     ControlInput ctrl;
-    ctrl.elevator = pitch_pid.update(cmd.pitch_rad, pitch, dt);
-    ctrl.aileron  = roll_pid .update(cmd.roll_rad,  roll,  dt);
-    ctrl.rudder   = yaw_pid  .update(cmd.yaw_rate_rad_s, state.angular_vel.y, dt);
+    ctrl.elevator = pitch_rate_pid.update(pitch_rate_cmd, state.angular_vel.x, dt);
+    ctrl.aileron  = roll_rate_pid .update(roll_rate_cmd,  state.angular_vel.z, dt);
+    ctrl.rudder   = yaw_rate_pid  .update(yaw_rate_cmd,   state.angular_vel.y, dt);
     ctrl.throttle = cmd.throttle;
 
     //  translated comment
@@ -50,7 +56,7 @@ ControlInput FlightController::update(const AircraftState& state,
 }
 
 void FlightController::reset() {
-    pitch_pid.reset();
-    roll_pid .reset();
-    yaw_pid  .reset();
+    pitch_rate_pid.reset();
+    roll_rate_pid .reset();
+    yaw_rate_pid  .reset();
 }

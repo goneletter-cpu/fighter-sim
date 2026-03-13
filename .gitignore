@@ -1,0 +1,8 @@
+.DS_Store
+build/
+build/**
+third_party/fgdata/
+third_party/fgaddon/
+third_party/jsbsim/
+third_party/**/build/
+build/logs/

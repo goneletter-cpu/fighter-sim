@@ -2,6 +2,7 @@
 #include "physics.h"
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/euler_angles.hpp>
+#include <glm/common.hpp>
 #include <cmath>
 
 // ── AircraftState ─────────────────────────────────────────────────────────────
@@ -22,51 +23,79 @@ glm::vec3 FlightDynamics::aero_force(const AircraftState& s,
     glm::mat3 body_from_world = glm::mat3_cast(glm::inverse(s.orientation));
     glm::vec3 v_body = body_from_world * s.velocity;
 
-    float airspeed = glm::length(s.velocity);
-    float q = 0.5f * 1.225f * airspeed * airspeed;  //  translated comment
+    float airspeed = glm::length(v_body);
+    float safe_speed = glm::max(airspeed, 0.5f);
+    float q = 0.5f * air_density_ * safe_speed * safe_speed;  //  translated comment
 
-    //  translated comment
-    //  translated comment
-    float alpha = 0.0f;
-    if (airspeed > 1.0f) {
-        float forward_speed = -v_body.z;
-        if (forward_speed < 0.1f) forward_speed = 0.1f;
-        alpha = std::atan2(-v_body.y, forward_speed);
-    }
-    //  translated comment
-    alpha = glm::clamp(alpha, glm::radians(-25.0f), glm::radians(25.0f));
-    float CL = 0.1f + 2.0f * alpha + 0.5f * ctrl.elevator;
-    float CD = 0.02f + 0.1f * CL * CL;
+    float forward_speed = glm::max(-v_body.z, 0.1f);
+    float alpha = std::atan2(v_body.y, forward_speed);
+    float beta  = std::atan2(v_body.x, forward_speed);
+
+    float stall_alpha = alpha_stall_rad_;
+    float stall_factor = 1.0f - glm::smoothstep(stall_alpha, alpha_max_rad_, std::abs(alpha));
+
+    float q_hat = (safe_speed > 1.0f) ? (s.angular_vel.x * mean_chord / (2.0f * safe_speed)) : 0.0f;
+
+    float CL = CL0_ + CL_alpha_ * alpha + CL_elevator_ * ctrl.elevator + CL_q_ * q_hat;
+    CL *= stall_factor;
+
+    float CD = CD0_ + k_induced_ * CL * CL + CD_beta_ * beta * beta;
+    CD += CD_stall_ * (1.0f - stall_factor);
+
+    float CY = CY_beta_ * beta + CY_rudder_ * ctrl.rudder;
+    CY *= glm::mix(1.0f, 0.35f, 1.0f - stall_factor);
 
     float lift = q * wing_area * CL;
     float drag = q * wing_area * CD;
+    float side = q * wing_area * CY;
 
-    //  translated comment
-    glm::vec3 lift_force  = glm::vec3(0, lift, 0);
-    glm::vec3 drag_force  = glm::vec3(0, 0, drag);   //  translated comment
+    glm::vec3 v_hat = (airspeed > 1e-3f) ? (v_body / airspeed) : glm::vec3(0.0f, 0.0f, -1.0f);
+    glm::vec3 right(1.0f, 0.0f, 0.0f);
+    glm::vec3 lift_dir = glm::normalize(glm::cross(right, v_hat));
+    if (glm::length(lift_dir) < 1e-4f) {
+        lift_dir = glm::vec3(0.0f, 1.0f, 0.0f);
+    }
+    glm::vec3 side_dir = glm::normalize(glm::cross(v_hat, lift_dir));
 
-    return lift_force - drag_force;
+    glm::vec3 lift_force = lift_dir * lift;
+    glm::vec3 drag_force = -v_hat * drag;
+    glm::vec3 side_force = side_dir * side;
+
+    return lift_force + drag_force + side_force;
 }
 
 //  translated comment
 glm::vec3 FlightDynamics::aero_torque(const AircraftState& s,
                                        const ControlInput& ctrl) const {
-    float airspeed = glm::length(s.velocity);
-    float q = 0.5f * 1.225f * airspeed * airspeed;
+    glm::mat3 body_from_world = glm::mat3_cast(glm::inverse(s.orientation));
+    glm::vec3 v_body = body_from_world * s.velocity;
+    float airspeed = glm::length(v_body);
+    float safe_speed = glm::max(airspeed, 0.5f);
+    float q = 0.5f * air_density_ * safe_speed * safe_speed;
     float qS = q * wing_area;
 
-    //  translated comment
-    float Cm = -2.0f * ctrl.elevator - 0.5f * s.angular_vel.x;  //  translated comment
-    float Cl = -1.5f * ctrl.aileron  - 0.3f * s.angular_vel.z;  //  translated comment
-    float Cn =  1.0f * ctrl.rudder   - 0.5f * s.angular_vel.y;  //  translated comment
+    float forward_speed = glm::max(-v_body.z, 0.1f);
+    float alpha = std::atan2(v_body.y, forward_speed);
+    float beta  = std::atan2(v_body.x, forward_speed);
 
-    float mean_chord = 3.0f;  //  translated comment
-    float span       = 9.5f;  //  translated comment
+    float stall_factor = 1.0f - glm::smoothstep(alpha_stall_rad_, alpha_max_rad_, std::abs(alpha));
+    float p_hat = (safe_speed > 1.0f) ? (s.angular_vel.z * wing_span / (2.0f * safe_speed)) : 0.0f;
+    float q_hat = (safe_speed > 1.0f) ? (s.angular_vel.x * mean_chord / (2.0f * safe_speed)) : 0.0f;
+    float r_hat = (safe_speed > 1.0f) ? (s.angular_vel.y * wing_span / (2.0f * safe_speed)) : 0.0f;
+
+    float Cm = Cm0_ + Cm_alpha_ * alpha + Cm_q_ * q_hat + Cm_elevator_ * ctrl.elevator;
+    float Cl = Cl_beta_ * beta + Cl_p_ * p_hat + Cl_aileron_ * ctrl.aileron;
+    float Cn = Cn_beta_ * beta + Cn_r_ * r_hat + Cn_rudder_ * ctrl.rudder;
+
+    float eff = glm::mix(0.35f, 1.0f, stall_factor);
+    Cm *= eff;
+    Cl *= eff;
+    Cn *= eff;
 
     return glm::vec3(
         qS * mean_chord * Cm,   //  translated comment
-        qS * span       * Cn,   //  translated comment
-        qS * span       * Cl    //  translated comment
+        qS * wing_span  * Cn,   //  translated comment
+        qS * wing_span  * Cl    //  translated comment
     );
 }
 
