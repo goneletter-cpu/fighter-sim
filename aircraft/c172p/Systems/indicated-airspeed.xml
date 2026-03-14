@@ -1,5 +1,0 @@
-<?xml version="1.0"?>
-<!-- Minimal IAS system stub for standalone JSBSim use. -->
-<system name="indicated-airspeed">
-    <property type="bool" value="0">/sim/model/c172p/securing/pitot-cover-visible</property>
-</system>

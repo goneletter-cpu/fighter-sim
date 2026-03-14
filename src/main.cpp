@@ -1165,7 +1165,7 @@ int main() {
 
 
     //  translated comment
-    WireMesh fighter_mesh = make_fighter_mesh();
+    WireMesh fighter_mesh = make_fighter_mesh();//飞机线框函数
     WireMesh carrier_mesh = make_carrier_mesh();
     WireMesh carrier_marks_mesh = make_catapult_marks_mesh();
     WireMesh bomb_mesh = make_bomb_mesh();

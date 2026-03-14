@@ -837,7 +837,8 @@ void Renderer::draw_attitude_gauge(const glm::vec3& euler_deg,
 // ──  translated comment
 //  translated comment
 
-WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {
+WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {//飞机线框绘制
+    /*
     WireMesh m;
     gear_deploy = glm::clamp(gear_deploy, 0.0f, 1.0f);
     flap_deploy = glm::clamp(flap_deploy, 0.0f, 1.0f);
@@ -1001,6 +1002,55 @@ WireMesh make_fighter_mesh_variant(float gear_deploy, float flap_deploy) {
     }
 
     return m;
+    */
+   WireMesh mesh;
+    const int rings = 8;
+    const int sectors = 12;
+    const float radius = 2.0f;
+
+    float const R = 1.0f / (float)(rings);
+    float const S = 1.0f / (float)(sectors);
+
+    // 生成顶点
+    for (int r = 0; r <= rings; ++r) {
+        float phi = glm::pi<float>() * r * R; // 极角 [0, pi]
+        float sinPhi = sin(phi);
+        float cosPhi = cos(phi);
+
+        for (int s = 0; s <= sectors; ++s) {
+            float theta = 2.0f * glm::pi<float>() * s * S; // 方位角 [0, 2pi]
+            float sinTheta = sin(theta);
+            float cosTheta = cos(theta);
+
+            glm::vec3 vertex(
+                radius * sinPhi * cosTheta,
+                radius * cosPhi,
+                radius * sinPhi * sinTheta
+            );
+            mesh.vertices.push_back(vertex);
+        }
+    }
+
+    // 生成纬线（水平环）
+    for (int r = 0; r < rings; ++r) {
+        for (int s = 0; s < sectors; ++s) {
+            int cur = r * (sectors + 1) + s;
+            int next = cur + 1;
+            mesh.line_indices.push_back(cur);
+            mesh.line_indices.push_back(next);
+        }
+    }
+    // 生成经线（垂直弧）
+    for (int s = 0; s < sectors; ++s) {
+        for (int r = 0; r < rings; ++r) {
+            int cur = r * (sectors + 1) + s;
+            int next = (r + 1) * (sectors + 1) + s;
+            mesh.line_indices.push_back(cur);
+            mesh.line_indices.push_back(next);
+        }
+    }
+
+    return mesh;
 }
 
 WireMesh make_fighter_mesh() {
