@@ -1,68 +1,113 @@
 #include "jsbsim_adapter.h"
+
 #include <FGFDMExec.h>
 #include <initialization/FGInitialCondition.h>
+
 #include <algorithm>
 #include <cmath>
-#include <filesystem>
+#include <iostream>
+#include <iomanip>
 
 namespace {
+
 constexpr double kFtToM = 0.3048;
 constexpr double kMToFt = 3.28083989501312;
+
 }
 
+/*========================================================*/
+
 JSBSimAdapter::JSBSimAdapter()
-    : fdm_(nullptr)
-    , initialized_(false)
+    : fdm_(nullptr),
+      initialized_(false)
 {}
 
-JSBSimAdapter::~JSBSimAdapter() {
+JSBSimAdapter::~JSBSimAdapter()
+{
     delete fdm_;
 }
 
-bool JSBSimAdapter::init(const std::string& model,
-                         const AircraftState& initial_state,
-                         float dt) {
-    if (!fdm_) fdm_ = new JSBSim::FGFDMExec();
+/*========================================================*/
+/*                 DEBUG PROPERTY DUMP                    */
+/*========================================================*/
 
-    std::string model_name = model;
-    std::string root = std::string(FIGHTER_SIM_ROOT) + "/third_party/jsbsim";
-    std::string aircraft_path = "aircraft";
-    std::string engine_path = "engine";
-    std::string systems_path = "systems";
+void JSBSimAdapter::dump_engine_state()
+{
+    double rpm =
+        fdm_->GetPropertyValue("propulsion/engine[0]/engine-rpm");
 
-    auto apply_fg_paths = [&](const std::string& name) {
-        const size_t slash = name.find('/');
-        if (slash == std::string::npos) return;
-        const std::string aircraft_dir = name.substr(0, slash);
-        const std::string base_dir = aircraft_path + "/" + aircraft_dir;
-        const std::string engines_dir = base_dir + "/Engines";
-        const std::string systems_dir = base_dir + "/Systems";
-        // Prefer subfolders when present (FGData/FGAddon layout).
-        engine_path = std::filesystem::exists(root + "/" + engines_dir) ? engines_dir : base_dir;
-        systems_path = std::filesystem::exists(root + "/" + systems_dir) ? systems_dir : base_dir;
-    };
+    double throttle =
+        fdm_->GetPropertyValue("fcs/throttle-cmd-norm");
 
-    if (model.rfind("fgaddon:", 0) == 0) {
-        model_name = model.substr(8);
-        root = std::string(FIGHTER_SIM_ROOT) + "/third_party/fgaddon";
-        aircraft_path = "Aircraft";
-        apply_fg_paths(model_name);
-    } else if (model.rfind("fgdata:", 0) == 0) {
-        model_name = model.substr(7);
-        root = std::string(FIGHTER_SIM_ROOT) + "/third_party/fgdata";
-        aircraft_path = "Aircraft";
-        apply_fg_paths(model_name);
+    double mixture =
+        fdm_->GetPropertyValue("fcs/mixture-cmd-norm");
+
+    double mags =
+        fdm_->GetPropertyValue("controls/switches/magnetos");
+
+    double fuel_flow =
+        fdm_->GetPropertyValue("propulsion/engine[0]/fuel-flow-rate-pps");
+
+    double running =
+        fdm_->GetPropertyValue("propulsion/engine[0]/running");
+
+    double thrust =
+        fdm_->GetPropertyValue("propulsion/engine[0]/thrust-lbs");
+
+    double fuel =
+        fdm_->GetPropertyValue("propulsion/tank[0]/contents-lbs");
+
+    std::cout
+    << std::fixed << std::setprecision(2)
+    << "[ENGINE] "
+    << "RPM=" << rpm
+    << "  Thr=" << throttle
+    << "  Mix=" << mixture
+    << "  Mag=" << mags
+    << "  FuelFlow=" << fuel_flow
+    << "  Run=" << running
+    << "  Thrust=" << thrust
+    << "  Tank=" << fuel
+    << std::endl;
+}
+
+/*========================================================*/
+/*                       INIT                             */
+/*========================================================*/
+
+bool JSBSimAdapter::init(
+    const std::string&,
+    const AircraftState& initial_state,
+    float dt)
+{
+    std::cout << "\n================ JSBSim INIT ================\n";
+
+    if (!fdm_)
+    {
+        std::cout << "[JSBSim] Creating FGFDMExec\n";
+        fdm_ = new JSBSim::FGFDMExec();
     }
+
+    std::string root =
+    std::string(FIGHTER_SIM_ROOT) 
+    +"/jsbsim";
+
+    std::cout << "[JSBSim] RootDir = " << root << std::endl;
 
     fdm_->SetRootDir(SGPath(root));
-    fdm_->SetAircraftPath(SGPath(aircraft_path));
-    fdm_->SetEnginePath(SGPath(engine_path));
-    fdm_->SetSystemsPath(SGPath(systems_path));
+    fdm_->SetAircraftPath(SGPath("aircraft"));
 
-    const bool add_model_to_path = (model_name.find('/') == std::string::npos);
-    if (!fdm_->LoadModel(model_name, add_model_to_path)) {
+    std::cout << "[JSBSim] AircraftPath = aircraft\n";
+    std::cout << "[JSBSim] Loading model\n";
+
+    if (!fdm_->LoadModel("ball", true))
+    //选择模型并处理错误
+    {
+        std::cout << "[JSBSim] ERROR: LoadModel failed\n";
         return false;
     }
+
+    std::cout << "[JSBSim] Model loaded\n";
 
     fdm_->Setdt(dt);
 
@@ -70,152 +115,163 @@ bool JSBSimAdapter::init(const std::string& model,
     const glm::vec3 vel_mps = initial_state.velocity;
     const glm::vec3 euler = initial_state.euler_angles();
 
-    const double vn_fps = -vel_mps.z * kMToFt;
-    const double ve_fps =  vel_mps.x * kMToFt;
-    const double vd_fps = -vel_mps.y * kMToFt;
-
     auto ic = fdm_->GetIC();
+
+    std::cout << "[JSBSim] Setting initial conditions\n";
+
     ic->SetLatitudeDegIC(0.0);
     ic->SetLongitudeDegIC(0.0);
+
     ic->SetAltitudeASLFtIC(pos_m.y * kMToFt);
-    ic->SetVNorthFpsIC(vn_fps);
-    ic->SetVEastFpsIC(ve_fps);
-    ic->SetVDownFpsIC(vd_fps);
+
+    ic->SetVNorthFpsIC(-vel_mps.z * kMToFt);
+    ic->SetVEastFpsIC( vel_mps.x * kMToFt);
+    ic->SetVDownFpsIC(-vel_mps.y * kMToFt);
+
     ic->SetPhiRadIC(euler.z);
     ic->SetThetaRadIC(euler.x);
     ic->SetPsiRadIC(euler.y);
+
     ic->SetPRadpsIC(0.0);
     ic->SetQRadpsIC(0.0);
     ic->SetRRadpsIC(0.0);
-    ic->SetWindNEDFpsIC(0.0, 0.0, 0.0);
-    ic->SetTerrainElevationFtIC(0.0);
 
-    fdm_->SetPropertyValue("propulsion/cutoff_cmd", 0.0);
-    fdm_->SetPropertyValue("propulsion/starter_cmd", 1.0);
-    fdm_->SetPropertyValue("propulsion/engine[0]/set-running", 1.0);
-    fdm_->SetPropertyValue("controls/switches/master-bat", 1.0);
-    fdm_->SetPropertyValue("controls/switches/master-alt", 1.0);
-    fdm_->SetPropertyValue("controls/circuit-breakers/master", 1.0);
-    fdm_->SetPropertyValue("controls/switches/magnetos", 3.0);
-    fdm_->SetPropertyValue("controls/switches/starter", 1.0);
-    fdm_->SetPropertyValue("fcs/mixture-cmd-norm", 1.0);
-    fdm_->SetPropertyValue("fcs/mixture-cmd-norm[0]", 1.0);
-    fdm_->SetPropertyValue("controls/engines/current-engine/mixture", 1.0);
-    fdm_->SetPropertyValue("controls/engines/engine[0]/mixture", 1.0);
-    fdm_->SetPropertyValue("controls/engines/current-engine/starter", 1.0);
-    fdm_->SetPropertyValue("controls/engines/engine[0]/starter", 1.0);
-    fdm_->SetPropertyValue("fcs/left-brake-cmd-norm", 0.0);
-    fdm_->SetPropertyValue("fcs/right-brake-cmd-norm", 0.0);
-    fdm_->SetPropertyValue("fcs/parking-brake-cmd-norm", 0.0);
-    fdm_->SetPropertyValue("forces/hold-down", 0.0);
-    fdm_->SetPropertyValue("fcs/flap-cmd-norm", 0.0);
-    fdm_->SetPropertyValue("fcs/roll-trim-cmd-norm", 0.0);
-    fdm_->SetPropertyValue("fcs/pitch-trim-cmd-norm", 0.0);
-    fdm_->SetPropertyValue("fcs/yaw-trim-cmd-norm", 0.0);
-    // FGData c172p expects this to exist for bushkit logic.
-    fdm_->SetPropertyValue("bushkit", 0.0);
-    fdm_->SetPropertyValue("fdm/jsbsim/bushkit", 0.0);
-    fdm_->SetPropertyValue("controls/engines/active-engine", 0.0);
-    fdm_->SetPropertyValue("controls/engines/engine/use-primer", 0.0);
-    fdm_->SetPropertyValue("controls/gear/brake-parking", 0.0);
-    fdm_->SetPropertyValue("controls/gear/water-rudder", 0.0);
-    fdm_->SetPropertyValue("sim/model/c172p/securing/chock-visible", 0.0);
-    fdm_->SetPropertyValue("fdm/jsbsim/damage/repairing", 0.0);
-    fdm_->SetPropertyValue("sim/model/c172p/hydraulics/hydraulic-pump", 1.0);
-    fdm_->SetPropertyValue("engines/active-engine/killed", 0.0);
-    fdm_->SetPropertyValue("engines/active-engine/oil-lacking", 0.0);
-    fdm_->SetPropertyValue("fcs/stick-force-per-g", 0.0);
+    ic->SetWindNEDFpsIC(0,0,0);
+    ic->SetTerrainElevationFtIC(0);
+
+    std::cout << "[JSBSim] Running IC...\n";
 
     initialized_ = fdm_->RunIC();
-    if (initialized_) {
-        // Release starter after initialization; engine is already set running.
-        fdm_->SetPropertyValue("controls/switches/starter", 0.0);
-        fdm_->SetPropertyValue("controls/engines/current-engine/starter", 0.0);
-        fdm_->SetPropertyValue("controls/engines/engine[0]/starter", 0.0);
-    }
-    return initialized_;
-}
 
-void JSBSimAdapter::set_controls(const ControlInput& ctrl) {
-    if (!initialized_) return;
-    const double aileron = std::clamp((double)ctrl.aileron, -1.0, 1.0);
-    const double elevator = std::clamp((double)ctrl.elevator, -1.0, 1.0);
-    const double rudder = std::clamp((double)ctrl.rudder, -1.0, 1.0);
-    const double throttle = std::clamp((double)ctrl.throttle, 0.0, 1.0);
+    std::cout << "[JSBSim] RunIC result = "
+              << initialized_
+              << std::endl;
 
-    fdm_->SetPropertyValue("fcs/aileron-cmd-norm", aileron);
-    fdm_->SetPropertyValue("fcs/elevator-cmd-norm", elevator);
-    fdm_->SetPropertyValue("fcs/rudder-cmd-norm", rudder);
-    fdm_->SetPropertyValue("fcs/throttle-cmd-norm", throttle);
-    fdm_->SetPropertyValue("fcs/throttle-cmd-norm[0]", throttle);
-    fdm_->SetPropertyValue("controls/engines/engine[0]/throttle", throttle);
-    fdm_->SetPropertyValue("controls/engines/current-engine/throttle", throttle);
-    fdm_->SetPropertyValue("controls/engines/throttle-all", throttle);
-    fdm_->SetPropertyValue("fcs/mixture-cmd-norm", 1.0);
-    fdm_->SetPropertyValue("fcs/mixture-cmd-norm[0]", 1.0);
-}
+    if (!initialized_)
+        return false;
 
-void JSBSimAdapter::set_aux_controls(float flap_norm, float gear_norm) {
-    if (!initialized_) return;
-    const double flap = std::clamp((double)flap_norm, 0.0, 1.0);
-    const double gear = std::clamp((double)gear_norm, 0.0, 1.0);
-    fdm_->SetPropertyValue("fcs/flap-cmd-norm", flap);
-    fdm_->SetPropertyValue("fcs/gear-cmd-norm", gear);
-}
+    /*--------------------------------------------------*/
+    /*               ENGINE START SEQUENCE              */
+    /*--------------------------------------------------*/
 
-void JSBSimAdapter::enable_autopilot() {
-    if (!initialized_) return;
-    const double heading_rad = fdm_->GetPropertyValue("attitude/heading-true-rad");
-    const double heading_deg = heading_rad * 57.29577951308232;
-    double alt_ft = fdm_->GetPropertyValue("position/h-agl-ft");
-    if (alt_ft < 1.0) {
-        alt_ft = fdm_->GetPropertyValue("position/h-sl-ft");
+    std::cout << "[JSBSim] Starting engine sequence\n";
+
+    fdm_->SetPropertyValue(
+        "controls/switches/magnetos", 3);
+
+    fdm_->SetPropertyValue(
+        "fcs/mixture-cmd-norm", 1);
+
+    fdm_->SetPropertyValue(
+        "fcs/throttle-cmd-norm", 0.2);
+
+    fdm_->SetPropertyValue(
+        "propulsion/engine[0]/set-running", 1);
+
+    /*--------------------------------------------------*/
+    /*                     WARMUP                       */
+    /*--------------------------------------------------*/
+
+    std::cout << "\n[JSBSim] Warmup phase\n";
+
+    for (int i = 0; i < 120; ++i)
+    {
+        fdm_->Run();
+
+        if (i % 10 == 0)
+        {
+            std::cout << "[JSBSim] step " << i << " ";
+            dump_engine_state();
+        }
     }
 
-    fdm_->SetPropertyValue("ap/attitude_hold", 1.0);
-    fdm_->SetPropertyValue("ap/heading_hold", 1.0);
-    fdm_->SetPropertyValue("ap/altitude_hold", 1.0);
-    fdm_->SetPropertyValue("ap/heading_setpoint", heading_deg);
-    fdm_->SetPropertyValue("ap/altitude_setpoint", alt_ft);
+    std::cout << "\n[JSBSim] Final engine state\n";
+    dump_engine_state();
+
+    std::cout << "=============================================\n\n";
+
+    return true;
 }
 
-bool JSBSimAdapter::step(float dt) {
-    if (!initialized_) return false;
+/*========================================================*/
+/*                     CONTROLS                           */
+/*========================================================*/
+
+void JSBSimAdapter::set_controls(const ControlInput& ctrl)
+{
+    if (!initialized_) return;
+
+    fdm_->SetPropertyValue(
+        "fcs/aileron-cmd-norm",
+        std::clamp((double)ctrl.aileron,-1.0,1.0));
+
+    fdm_->SetPropertyValue(
+        "fcs/elevator-cmd-norm",
+        std::clamp((double)ctrl.elevator,-1.0,1.0));
+
+    fdm_->SetPropertyValue(
+        "fcs/rudder-cmd-norm",
+        std::clamp((double)ctrl.rudder,-1.0,1.0));
+
+    double thr =
+        std::clamp((double)ctrl.throttle,0.0,1.0);
+
+    fdm_->SetPropertyValue("fcs/throttle-cmd-norm",thr);
+}
+
+/*========================================================*/
+/*                        STEP                            */
+/*========================================================*/
+
+bool JSBSimAdapter::step(float dt)
+{
+    if (!initialized_)
+        return false;
+
     fdm_->Setdt(dt);
-    return fdm_->Run();
+
+    bool ok = fdm_->Run();
+
+    dump_engine_state();
+
+    return ok;
 }
 
-void JSBSimAdapter::sync_state(AircraftState& state) const {
+/*========================================================*/
+/*                    SYNC STATE                          */
+/*========================================================*/
+
+void JSBSimAdapter::sync_state(AircraftState& state) const
+{
     if (!initialized_) return;
 
-    const double n_ft = fdm_->GetPropertyValue("position/from-start-neu-n-ft");
-    const double e_ft = fdm_->GetPropertyValue("position/from-start-neu-e-ft");
-    const double u_ft = fdm_->GetPropertyValue("position/from-start-neu-u-ft");
-    state.position.x = (float)(e_ft * kFtToM);
-    state.position.y = (float)(u_ft * kFtToM);
+    const double n_ft =
+        fdm_->GetPropertyValue("position/from-start-neu-n-ft");
+
+    const double e_ft =
+        fdm_->GetPropertyValue("position/from-start-neu-e-ft");
+
+    const double u_ft =
+        fdm_->GetPropertyValue("position/from-start-neu-u-ft");
+
+    state.position.x = (float)( e_ft * kFtToM);
+    state.position.y = (float)( u_ft * kFtToM);
     state.position.z = (float)(-n_ft * kFtToM);
-
-    const double vn_fps = fdm_->GetPropertyValue("velocities/v-north-fps");
-    const double ve_fps = fdm_->GetPropertyValue("velocities/v-east-fps");
-    const double vd_fps = fdm_->GetPropertyValue("velocities/v-down-fps");
-    state.velocity.x = (float)(ve_fps * kFtToM);
-    state.velocity.y = (float)(-vd_fps * kFtToM);
-    state.velocity.z = (float)(-vn_fps * kFtToM);
-
-    const double phi = fdm_->GetPropertyValue("attitude/phi-rad");
-    const double theta = fdm_->GetPropertyValue("attitude/theta-rad");
-    const double psi = fdm_->GetPropertyValue("attitude/psi-rad");
-    state.orientation = glm::normalize(glm::quat(glm::vec3((float)theta, (float)psi, (float)phi)));
-
-    const double p = fdm_->GetPropertyValue("velocities/p-rad_sec");
-    const double q = fdm_->GetPropertyValue("velocities/q-rad_sec");
-    const double r = fdm_->GetPropertyValue("velocities/r-rad_sec");
-    state.angular_vel.x = (float)q;
-    state.angular_vel.y = (float)r;
-    state.angular_vel.z = (float)p;
 }
 
-double JSBSimAdapter::get_property(const std::string& name) const {
+/*========================================================*/
+
+double JSBSimAdapter::get_property(
+    const std::string& name) const
+{
     if (!initialized_) return 0.0;
+
     return fdm_->GetPropertyValue(name);
+}
+void JSBSimAdapter::set_aux_controls(float flap_norm, float gear_norm)
+{
+    if (!initialized_) return;
+
+    fdm_->SetPropertyValue("fcs/flap-cmd-norm", flap_norm);
+    fdm_->SetPropertyValue("gear/gear-cmd-norm", gear_norm);
 }

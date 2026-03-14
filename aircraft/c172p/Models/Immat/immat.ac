@@ -1,0 +1,263 @@
+AC3Db
+MATERIAL "DefaultWhite.013" rgb 1.000 1.000 1.000  amb 0.800 0.800 0.800  emis 0.000 0.000 0.000  spec 0.320 0.320 0.320  shi 64 trans 0.000
+MATERIAL "Black.001" rgb 1.000 1.000 1.000  amb 0.800 0.800 0.800  emis 0.000 0.000 0.000  spec 0.500 0.500 0.500  shi 64 trans 0.000
+MATERIAL "DefaultWhite.012" rgb 1.000 1.000 1.000  amb 0.800 0.800 0.800  emis 0.000 0.000 0.000  spec 0.320 0.320 0.320  shi 64 trans 0.008
+MATERIAL "DefaultWhite.001" rgb 1.000 1.000 1.000  amb 0.800 0.800 0.800  emis 0.000 0.000 0.000  spec 0.320 0.320 0.320  shi 64 trans 0.008
+MATERIAL "DefaultWhite.002" rgb 1.000 1.000 1.000  amb 0.800 0.800 0.800  emis 0.000 0.000 0.000  spec 0.320 0.320 0.320  shi 64 trans 0.008
+OBJECT world
+name "Blender_exporter_v3.3__immat.ac"
+kids 10
+OBJECT poly
+name "ImatPanel1"
+data 19
+ImatPanel1.mesh.004
+crease 40.0
+texture "immat-white.png"
+numvert 4
+0.36495 0.43287 -0.12381
+0.36497 0.42542 -0.12379
+0.36495 0.43289 -0.11776
+0.36497 0.42544 -0.11774
+numsurf 1
+SURF 0X0
+mat 0
+refs 4
+0 0.022461 0.875
+2 -0.001953 0.875
+3 -0.001953 0.171875
+1 0.022461 0.171875
+kids 0
+OBJECT poly
+name "ImatPanel2"
+data 19
+ImatPanel2.mesh.004
+crease 40.0
+texture "immat-white.png"
+numvert 4
+0.36495 0.43287 -0.12381
+0.36495 0.43285 -0.12986
+0.36497 0.42542 -0.12379
+0.36497 0.4254 -0.12984
+numsurf 1
+SURF 0X0
+mat 0
+refs 4
+1 0.022461 0.875
+0 -0.001953 0.875
+2 -0.001953 0.171875
+3 0.022461 0.171875
+kids 0
+OBJECT poly
+name "ImatPanel3"
+data 19
+ImatPanel3.mesh.004
+crease 40.0
+texture "immat-white.png"
+numvert 4
+0.36495 0.43285 -0.12986
+0.36495 0.43283 -0.13591
+0.36497 0.4254 -0.12984
+0.36497 0.42538 -0.13589
+numsurf 1
+SURF 0X0
+mat 0
+refs 4
+1 0.022461 0.875
+0 -0.001953 0.875
+2 -0.001953 0.171875
+3 0.022461 0.171875
+kids 0
+OBJECT poly
+name "ImatPanel4"
+data 19
+ImatPanel4.mesh.004
+crease 40.0
+texture "immat-white.png"
+numvert 4
+0.36495 0.43283 -0.13591
+0.36496 0.43281 -0.14197
+0.36497 0.42538 -0.13589
+0.36498 0.42536 -0.14194
+numsurf 1
+SURF 0X0
+mat 0
+refs 4
+1 0.022461 0.875
+0 -0.001953 0.875
+2 -0.001953 0.171875
+3 0.022461 0.171875
+kids 0
+OBJECT poly
+name "ImatPanel5"
+data 19
+ImatPanel5.mesh.004
+crease 40.0
+texture "immat-white.png"
+numvert 4
+0.36496 0.43281 -0.14197
+0.36495 0.4328 -0.14802
+0.36498 0.42536 -0.14194
+0.36498 0.42535 -0.14799
+numsurf 1
+SURF 0X0
+mat 0
+refs 4
+1 0.022461 0.875
+0 -0.001953 0.875
+2 -0.001953 0.171875
+3 0.022461 0.171875
+kids 0
+OBJECT poly
+name "ImatPanel6"
+data 19
+ImatPanel6.mesh.004
+crease 40.0
+texture "immat-white.png"
+numvert 4
+0.36495 0.4328 -0.14802
+0.36498 0.42535 -0.14799
+0.36498 0.42532 -0.15405
+0.36495 0.43277 -0.15407
+numsurf 1
+SURF 0X0
+mat 0
+refs 4
+3 0.022461 0.875
+0 -0.001953 0.875
+1 -0.001953 0.171875
+2 0.022461 0.171875
+kids 0
+OBJECT poly
+name "ImatPanelBack"
+data 21
+ImatPanelBack.mesh.00
+crease 40.0
+texture "immat-white.png"
+numvert 4
+0.36404 0.43376 -0.11668
+0.36402 0.42444 -0.11662
+0.36404 0.42447 -0.15513
+0.36405 0.4338 -0.15519
+numsurf 1
+SURF 0X0
+mat 1
+refs 4
+3 0 0
+0 0 0
+1 0 0
+2 0 0
+kids 0
+OBJECT poly
+name "ImmatFuselageLeft"
+data 20
+ImatFuselageLeft.001
+crease 40.0
+texture "immat.fuselage.png"
+numvert 8
+4.54401 0.16423 0.30294
+4.53904 0.31421 0.30975
+4.53468 0.40132 0.3117
+4.54685 0.03725 0.29079
+3.27815 0.04334 0.48285
+3.26815 0.34508 0.49343
+3.28021 -0.0189 0.47622
+3.27292 0.20103 0.48867
+numsurf 3
+SURF 0X10
+mat 2
+refs 4
+4 0.002368 0.175329
+0 0.995455 0.34758
+1 0.995898 0.745988
+7 0.002958 0.594065
+SURF 0X10
+mat 2
+refs 4
+0 0.995455 0.34758
+4 0.002368 0.175329
+6 0.002243 0.009908
+3 0.994488 0.009908
+SURF 0X10
+mat 2
+refs 4
+2 0.995081 0.977691
+5 0.003255 0.976907
+7 0.002958 0.594065
+1 0.995898 0.745988
+kids 0
+OBJECT poly
+name "ImmatFuselageRight"
+data 21
+ImatFuselageRight.001
+crease 40.0
+texture "immat.fuselage.png"
+numvert 8
+3.27952 0.10523 -0.48313
+3.27271 0.25511 -0.49058
+3.27049 0.3423 -0.49246
+3.2857 -0.02157 -0.47018
+4.5504 0.10142 -0.29808
+4.53671 0.40295 -0.30997
+4.55305 0.03922 -0.29119
+4.54286 0.25899 -0.30462
+numsurf 3
+SURF 0X10
+mat 3
+refs 4
+4 0.002368 0.175329
+0 0.995455 0.34758
+1 0.995898 0.745988
+7 0.002958 0.594065
+SURF 0X10
+mat 3
+refs 4
+0 0.995455 0.34758
+4 0.002368 0.175329
+6 0.002243 0.009908
+3 0.994488 0.009908
+SURF 0X10
+mat 3
+refs 4
+2 0.995081 0.977691
+5 0.003255 0.976907
+7 0.002958 0.594065
+1 0.995898 0.745988
+kids 0
+OBJECT poly
+name "ImmatWingLeft"
+data 16
+ImatWingLeft.001
+crease 40.0
+texture "immat.fuselage.png"
+numvert 8
+1.32118 0.87118 4.65952
+1.08877 0.86227 4.66154
+0.95367 0.85548 4.66029
+1.51789 0.88386 4.65612
+1.41779 0.75751 2.67658
+0.95021 0.7395 2.68064
+1.51425 0.7622 2.67583
+1.17345 0.75022 2.67888
+numsurf 3
+SURF 0X10
+mat 4
+refs 4
+4 0.002368 0.175329
+0 0.995455 0.34758
+1 0.995898 0.745988
+7 0.002958 0.594065
+SURF 0X10
+mat 4
+refs 4
+0 0.995455 0.34758
+4 0.002368 0.175329
+6 0.002243 0.009908
+3 0.994488 0.009908
+SURF 0X10
+mat 4
+refs 4
+2 0.995081 0.977691
+5 0.003255 0.976907
+7 0.002958 0.594065
+1 0.995898 0.745988
+kids 0

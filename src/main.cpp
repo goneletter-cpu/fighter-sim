@@ -133,7 +133,8 @@ struct Phase {
 
 struct ScriptConfig {
     std::string run_mode = "single"; // single | batch
-    std::string model = "c172x";
+    //机型
+    std::string model = "ball";
     std::vector<std::string> models;
     float initial_alt_m = 1000.0f;
     float initial_speed_mps = 55.0f;
@@ -1154,12 +1155,14 @@ int main() {
     glfwGetFramebufferSize(window, &fb_w, &fb_h);
     glViewport(0, 0, fb_w, fb_h);
 
+    
     //  translated comment
     Renderer renderer(WIDTH, HEIGHT);
     if (!renderer.init()) {
         printf("Renderer init failed\n");
         return 1;
     }
+
 
     //  translated comment
     WireMesh fighter_mesh = make_fighter_mesh();
@@ -1256,9 +1259,19 @@ int main() {
         printf("No models found in %s. Exiting.\n", script_path.c_str());
         return 1;
     }
+    //没有飞行脚本的情况下足够长的时间自由落体
     if (script.phases.empty()) {
-        printf("No phases found in %s. Exiting.\n", script_path.c_str());
-        return 1;
+    printf("No phases found in %s. Using free flight mode (zero controls).\n", script_path.c_str());
+    Phase default_phase;
+    default_phase.duration_s = 1e9f;          // 足够长，相当于无限
+    default_phase.throttle = 0.0f;
+    default_phase.elevator = 0.0f;
+    default_phase.aileron = 0.0f;
+    default_phase.rudder = 0.0f;
+    default_phase.flap = 0.0f;
+    default_phase.gear = 1.0f;                 // 起落架默认收起（可根据需要调整）
+    default_phase.has_targets = false;         // 不使用 PID
+    script.phases.push_back(default_phase);
     }
 
     std::filesystem::create_directories(std::string(FIGHTER_SIM_ROOT) + "/build/logs");
@@ -1443,9 +1456,10 @@ int main() {
                 if (sim_time_s + 1e-6 >= next_track_log_s) {
                     float speed = glm::length(state.velocity);
                     double thr_actual = jsbsim.get_property("controls/engines/engine[0]/throttle");
-                    double eng_rpm_jsb = jsbsim.get_property("propulsion/engine[0]/rpm");
-                    double eng_rpm_fg = jsbsim.get_property("engines/active-engine/rpm");
-                    double eng_rpm = (eng_rpm_jsb > 1.0) ? eng_rpm_jsb : eng_rpm_fg;
+                    // FGPiston exposes RPM as "propulsion/engine[N]/engine-rpm" (not just "/rpm")
+                    double eng_rpm = jsbsim.get_property("propulsion/engine[0]/engine-rpm");
+                    if (eng_rpm < 1.0) eng_rpm = jsbsim.get_property("propulsion/engine[0]/rpm");
+                    if (eng_rpm < 1.0) eng_rpm = jsbsim.get_property("engines/active-engine/rpm");
                     track_log.setf(std::ios::fixed);
                     track_log << std::setprecision(2)
                               << sim_time_s << ","

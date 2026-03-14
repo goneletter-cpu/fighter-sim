@@ -26,4 +26,6 @@ public:
 private:
     JSBSim::FGFDMExec* fdm_;
     bool initialized_;
+
+    void dump_engine_state();
 };

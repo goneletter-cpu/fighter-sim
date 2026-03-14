@@ -17,7 +17,7 @@ set(BUILD_JULIA_PACKAGE OFF CACHE BOOL "" FORCE)
 set(BUILD_MATLAB_SFUNCTION OFF CACHE BOOL "" FORCE)
 
 # JSBSim library
-add_subdirectory(third_party/jsbsim EXCLUDE_FROM_ALL)
+add_subdirectory(jsbsim EXCLUDE_FROM_ALL)
 
 # translated comment
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp")
