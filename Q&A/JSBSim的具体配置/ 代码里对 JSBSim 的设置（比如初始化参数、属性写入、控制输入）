@@ -1,0 +1,112 @@
+明白，这里我只讲“代码里对 JSBSim 的设置”，按初始化 → 控制输入 → 状态读取的顺序，并且把关键属性列清楚，方便你直接改。
+
+1) 初始化：JSBSimAdapter::init(...)
+文件：/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/src/jsbsim_adapter.cpp
+
+路径设置
+
+SetRootDir(root)
+SetAircraftPath(aircraft_path)
+SetEnginePath(engine_path)
+SetSystemsPath(systems_path)
+这决定 JSBSim 从哪里加载模型/发动机/系统文件。
+模型加载
+
+LoadModel(model_name, add_model_to_path)
+模型名来自脚本 model 字段，例如 fgdata:c172p。
+初始条件（IC）
+
+SetAltitudeASLFtIC(pos_m.y * kMToFt)
+SetVNorthFpsIC(vn_fps)
+SetVEastFpsIC(ve_fps)
+SetVDownFpsIC(vd_fps)
+SetPhiRadIC(euler.z)
+SetThetaRadIC(euler.x)
+SetPsiRadIC(euler.y)
+SetWindNEDFpsIC(0,0,0)
+SetTerrainElevationFtIC(0)
+发动机/电气/点火启动相关属性
+（这些是你目前代码里写死的“启动配置”）
+
+电源与断路器
+
+/controls/switches/master-bat = 1
+/controls/switches/master-alt = 1
+/controls/circuit-breakers/master = 1
+点火/起动
+
+/controls/switches/magnetos = 3
+/controls/switches/starter = 1
+/controls/engines/current-engine/starter = 1
+/controls/engines/engine[0]/starter = 1
+混合比
+
+/controls/engines/current-engine/mixture = 1
+/controls/engines/engine[0]/mixture = 1
+发动机状态
+
+/propulsion/engine[0]/set-running = 1
+/propulsion/starter_cmd = 1
+/propulsion/cutoff_cmd = 0
+初始化完成后
+
+fdm_->RunIC()
+立即释放 starter（避免持续打火）
+/controls/switches/starter = 0
+/controls/engines/current-engine/starter = 0
+/controls/engines/engine[0]/starter = 0
+2) 控制输入：JSBSimAdapter::set_controls(...)
+文件：/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/src/jsbsim_adapter.cpp
+
+飞行控制面
+
+fcs/aileron-cmd-norm
+fcs/elevator-cmd-norm
+fcs/rudder-cmd-norm
+油门
+
+fcs/throttle-cmd-norm
+fcs/throttle-cmd-norm[0]
+controls/engines/engine[0]/throttle
+controls/engines/current-engine/throttle
+controls/engines/throttle-all
+混合比（当前写死满富）
+
+fcs/mixture-cmd-norm
+fcs/mixture-cmd-norm[0]
+3) 辅助控制：set_aux_controls(...)
+文件：/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/src/jsbsim_adapter.cpp
+
+襟翼/起落架
+
+fcs/flap-cmd-norm
+fcs/gear-cmd-norm
+4) 每步推进：step(...)
+文件：/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/src/jsbsim_adapter.cpp
+
+fdm_->Setdt(dt)
+fdm_->Run()
+5) 状态同步：sync_state(...)
+文件：/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/src/jsbsim_adapter.cpp
+
+位置 / 速度
+
+position/from-start-neu-*-ft
+velocities/v-*-fps
+姿态
+
+attitude/phi-rad
+attitude/theta-rad
+attitude/psi-rad
+角速度
+
+velocities/p-rad_sec
+velocities/q-rad_sec
+velocities/r-rad_sec
+6) 运行时属性读取（日志用）
+文件：/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/src/main.cpp
+
+propulsion/engine[0]/rpm
+engines/active-engine/rpm
+controls/engines/engine[0]/throttle
+如果你还想看“哪些 JSBSim 属性必须写 / 哪些可以删”，或者想把这些配置抽成一个开关脚本，我可以继续帮你整理。

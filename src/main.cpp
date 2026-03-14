@@ -9,6 +9,7 @@
 #include <fstream>
 #include <sstream>
 #include <filesystem>
+#include <iomanip>
 #include <vector>
 
 #include "physics.h"
@@ -19,6 +20,10 @@
 
 // ──  translated comment
 
+#ifndef ENABLE_CSV_LOG
+#define ENABLE_CSV_LOG 0
+#endif
+
 static const int   WIDTH  = 1280;
 static const int   HEIGHT = 720;
 static const float SIM_DT = 1.0f / 120.0f;   //  translated comment
@@ -26,7 +31,7 @@ static const glm::vec3 START_POS(0.0f, 1000.0f, 0.0f);
 [[maybe_unused]] static const glm::vec3 FIXED_WAYPOINT(6000.0f, 1800.0f, -8000.0f); // x/y/z translated comment
 static const bool kEnableCombat = false;
 static const bool kUseAutopilot = false;
-static const char* kScriptPath = "config/flight_script.yaml";
+static const char* kScriptPath = "config/flight_script.txt";
 
 // ──  translated comment
 
@@ -120,6 +125,10 @@ struct Phase {
     float rudder = 0.0f;
     float flap = 0.0f;
     float gear = 1.0f;
+    float target_speed_mps = 60.0f;
+    float target_climb_mps = 0.0f;
+    float target_heading_deg = 0.0f;
+    bool has_targets = false;
 };
 
 struct ScriptConfig {
@@ -129,6 +138,7 @@ struct ScriptConfig {
     float initial_alt_m = 1000.0f;
     float initial_speed_mps = 55.0f;
     std::vector<Phase> phases;
+    bool use_pid = false;
 };
 
 static std::string trim_copy(const std::string& s) {
@@ -149,6 +159,36 @@ static std::vector<std::string> split_csv(const std::string& s) {
     return out;
 }
 
+static std::vector<std::string> split_ws(const std::string& s) {
+    std::vector<std::string> out;
+    std::stringstream ss(s);
+    std::string item;
+    while (ss >> item) {
+        out.push_back(item);
+    }
+    return out;
+}
+
+static std::string lower_copy(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    return s;
+}
+
+static float wrap_angle_deg(float deg) {
+    float r = std::fmod(deg, 360.0f);
+    if (r < 0.0f) r += 360.0f;
+    return r;
+}
+
+static float shortest_angle_deg(float target_deg, float current_deg) {
+    float t = wrap_angle_deg(target_deg);
+    float c = wrap_angle_deg(current_deg);
+    float d = t - c;
+    if (d > 180.0f) d -= 360.0f;
+    if (d < -180.0f) d += 360.0f;
+    return d;
+}
+
 static ScriptConfig load_script(const std::string& path) {
     ScriptConfig cfg;
     std::ifstream in(path);
@@ -157,153 +197,107 @@ static ScriptConfig load_script(const std::string& path) {
     }
 
     std::string line;
-    bool in_phases = false;
-    bool in_initial = false;
-    Phase current;
-    bool have_current = false;
-
-    auto flush_phase = [&]() {
-        if (have_current) {
-            cfg.phases.push_back(current);
-            current = Phase{};
-            have_current = false;
-        }
-    };
+    std::vector<std::string> columns;
+    bool have_columns = false;
 
     while (std::getline(in, line)) {
         std::string t = trim_copy(line);
         if (t.empty() || t[0] == '#') continue;
-        if (t == "phases:" || t == "phases") {
-            in_phases = true;
-            in_initial = false;
-            continue;
-        }
-        if (t == "initial:" || t == "initial") {
-            in_initial = true;
-            in_phases = false;
+
+        auto parse_kv = [&](const std::string& key, const std::string& val) {
+            std::string k = lower_copy(key);
+            if (k == "models") {
+                cfg.models = split_csv(val);
+            } else if (k == "run_mode") {
+                cfg.run_mode = val;
+            } else if (k == "model") {
+                cfg.model = val;
+            } else if (k == "initial_alt_m") {
+                cfg.initial_alt_m = std::stof(val);
+            } else if (k == "initial_speed_mps") {
+                cfg.initial_speed_mps = std::stof(val);
+            }
+        };
+
+        size_t colon = t.find(':');
+        if (colon != std::string::npos) {
+            std::string key = trim_copy(t.substr(0, colon));
+            std::string val = trim_copy(t.substr(colon + 1));
+            if (lower_copy(key) == "columns") {
+                columns = split_csv(val);
+                if (columns.empty()) columns = split_ws(val);
+                for (auto& c : columns) c = lower_copy(c);
+                have_columns = !columns.empty();
+            } else {
+                parse_kv(key, val);
+            }
             continue;
         }
 
-        if (t.rfind("models:", 0) == 0) {
-            std::string rest = trim_copy(t.substr(7));
-            cfg.models = split_csv(rest);
-            continue;
-        }
-        if (t.rfind("run_mode:", 0) == 0) {
-            cfg.run_mode = trim_copy(t.substr(9));
-            continue;
-        }
-        if (t.rfind("model:", 0) == 0) {
-            cfg.model = trim_copy(t.substr(6));
-            continue;
-        }
-
-        if (in_phases) {
-            if (t.rfind("-", 0) == 0) {
-                flush_phase();
-                have_current = true;
-                std::string after = trim_copy(t.substr(1));
-                if (after.rfind("name:", 0) == 0) {
-                    current.name = trim_copy(after.substr(5));
-                }
+        // Support "key value" directives (non-YAML).
+        {
+            auto parts = split_ws(t);
+            if (parts.size() >= 2) {
+                parse_kv(parts[0], parts[1]);
                 continue;
             }
-            size_t colon = t.find(':');
-            if (colon == std::string::npos) continue;
-            std::string key = trim_copy(t.substr(0, colon));
-            std::string val = trim_copy(t.substr(colon + 1));
-            have_current = true;
-            if (key == "name") current.name = val;
-            else if (key == "duration_s") current.duration_s = std::stof(val);
-            else if (key == "throttle") current.throttle = std::stof(val);
-            else if (key == "elevator") current.elevator = std::stof(val);
-            else if (key == "aileron") current.aileron = std::stof(val);
-            else if (key == "rudder") current.rudder = std::stof(val);
-            else if (key == "flap") current.flap = std::stof(val);
-            else if (key == "gear") current.gear = std::stof(val);
+        }
+
+        // Data lines: CSV or whitespace values.
+        std::vector<std::string> vals = split_csv(t);
+        if (vals.size() <= 1) vals = split_ws(t);
+        if (vals.empty()) continue;
+
+        Phase p{};
+        if (!have_columns) {
+            // Fixed order: duration_s, throttle, elevator, aileron, rudder, flap, gear
+            if (vals.size() >= 1) p.duration_s = std::stof(vals[0]);
+            if (vals.size() >= 2) p.throttle = std::stof(vals[1]);
+            if (vals.size() >= 3) p.elevator = std::stof(vals[2]);
+            if (vals.size() >= 4) p.aileron = std::stof(vals[3]);
+            if (vals.size() >= 5) p.rudder = std::stof(vals[4]);
+            if (vals.size() >= 6) p.flap = std::stof(vals[5]);
+            if (vals.size() >= 7) p.gear = std::stof(vals[6]);
+            cfg.phases.push_back(p);
             continue;
         }
 
-        if (in_initial) {
-            size_t colon = t.find(':');
-            if (colon == std::string::npos) continue;
-            std::string key = trim_copy(t.substr(0, colon));
-            std::string val = trim_copy(t.substr(colon + 1));
-            if (key == "altitude_m") cfg.initial_alt_m = std::stof(val);
-            else if (key == "speed_mps") cfg.initial_speed_mps = std::stof(val);
-            continue;
+        for (size_t i = 0; i < vals.size() && i < columns.size(); ++i) {
+            const std::string& c = columns[i];
+            const std::string& v = vals[i];
+            if (c == "duration_s") p.duration_s = std::stof(v);
+            else if (c == "fcs/throttle-cmd-norm") p.throttle = std::stof(v);
+            else if (c == "fcs/elevator-cmd-norm") p.elevator = std::stof(v);
+            else if (c == "fcs/aileron-cmd-norm") p.aileron = std::stof(v);
+            else if (c == "fcs/rudder-cmd-norm") p.rudder = std::stof(v);
+            else if (c == "fcs/flap-cmd-norm") p.flap = std::stof(v);
+            else if (c == "fcs/gear-cmd-norm") p.gear = std::stof(v);
+            else if (c == "target_speed_mps") { p.target_speed_mps = std::stof(v); p.has_targets = true; }
+            else if (c == "target_climb_mps") { p.target_climb_mps = std::stof(v); p.has_targets = true; }
+            else if (c == "target_heading_deg") { p.target_heading_deg = std::stof(v); p.has_targets = true; }
         }
+        if (p.has_targets) cfg.use_pid = true;
+        cfg.phases.push_back(p);
     }
-    flush_phase();
     return cfg;
 }
 
 static void write_default_script(const std::string& path) {
     std::ofstream out(path, std::ios::out | std::ios::trunc);
     if (!out.is_open()) return;
-    out << "run_mode: single\n";
-    out << "model: fgdata:c172p\n";
-    out << "models: fgdata:c172p\n";
-    out << "initial:\n";
-    out << "  altitude_m: 0\n";
-    out << "  speed_mps: 0\n";
-    out << "phases:\n";
-    out << "  - name: takeoff_roll\n";
-    out << "    duration_s: 10\n";
-    out << "    throttle: 1.0\n";
-    out << "    elevator: 0.03\n";
-    out << "    aileron: 0.0\n";
-    out << "    rudder: 0.0\n";
-    out << "    flap: 0.2\n";
-    out << "    gear: 1.0\n";
-    out << "  - name: flap_retract\n";
-    out << "    duration_s: 8\n";
-    out << "    throttle: 0.9\n";
-    out << "    elevator: 0.02\n";
-    out << "    aileron: 0.0\n";
-    out << "    rudder: 0.0\n";
-    out << "    flap: 0.0\n";
-    out << "    gear: 1.0\n";
-    out << "  - name: climb\n";
-    out << "    duration_s: 60\n";
-    out << "    throttle: 0.85\n";
-    out << "    elevator: 0.03\n";
-    out << "    aileron: 0.0\n";
-    out << "    rudder: 0.0\n";
-    out << "    flap: 0.0\n";
-    out << "    gear: 1.0\n";
-    out << "  - name: cruise\n";
-    out << "    duration_s: 120\n";
-    out << "    throttle: 0.65\n";
-    out << "    elevator: 0.0\n";
-    out << "    aileron: 0.0\n";
-    out << "    rudder: 0.0\n";
-    out << "    flap: 0.0\n";
-    out << "    gear: 1.0\n";
-    out << "  - name: descent\n";
-    out << "    duration_s: 80\n";
-    out << "    throttle: 0.35\n";
-    out << "    elevator: -0.015\n";
-    out << "    aileron: 0.0\n";
-    out << "    rudder: 0.0\n";
-    out << "    flap: 0.1\n";
-    out << "    gear: 1.0\n";
-    out << "  - name: approach\n";
-    out << "    duration_s: 60\n";
-    out << "    throttle: 0.28\n";
-    out << "    elevator: 0.01\n";
-    out << "    aileron: 0.0\n";
-    out << "    rudder: 0.0\n";
-    out << "    flap: 0.3\n";
-    out << "    gear: 1.0\n";
-    out << "  - name: landing\n";
-    out << "    duration_s: 20\n";
-    out << "    throttle: 0.18\n";
-    out << "    elevator: 0.02\n";
-    out << "    aileron: 0.0\n";
-    out << "    rudder: 0.0\n";
-    out << "    flap: 0.4\n";
-    out << "    gear: 1.0\n";
+    out << "run_mode single\n";
+    out << "model fgdata:c172p\n";
+    out << "models fgdata:c172p\n";
+    out << "initial_alt_m 0\n";
+    out << "initial_speed_mps 0\n";
+    out << "columns: duration_s,target_speed_mps,target_climb_mps,target_heading_deg,fcs/flap-cmd-norm,fcs/gear-cmd-norm\n";
+    out << "12,30,0,0,0.2,1.0\n";
+    out << "18,45,2.0,0,0.0,1.0\n";
+    out << "60,60,3.0,0,0.0,1.0\n";
+    out << "120,70,0.5,0,0.0,1.0\n";
+    out << "80,55,-1.0,0,0.1,1.0\n";
+    out << "60,50,-0.8,0,0.3,1.0\n";
+    out << "20,40,-0.5,0,0.4,1.0\n";
 }
 
 static WireMesh make_quadrant_overlay_mesh(float z_plane, float ring_scale, float ring_pulse) {
@@ -1217,7 +1211,12 @@ int main() {
     const double intro_duration_s = 8.5;
     [[maybe_unused]] const glm::vec3 carrier_pos(0.0f, START_POS.y - 70.0f, 220.0f);
     std::ofstream csv_log;
+    std::ofstream track_log;
     double sim_time_s = 0.0;
+    double next_track_log_s = 0.0;
+    PID speed_pid(0.06f, 0.005f, 0.02f, 0.6f);
+    PID climb_pid(0.20f, 0.02f, 0.06f, 0.4f);
+    PID heading_pid(0.02f, 0.000f, 0.01f, 0.35f);
 
     printf("Fighter Sim started\n");
     printf("OpenGL: %s\n", glGetString(GL_VERSION));
@@ -1280,11 +1279,20 @@ int main() {
     }
 
     std::string log_path = std::string(FIGHTER_SIM_ROOT) + "/build/logs/" + script.models[model_index] + ".csv";
+    std::string track_path = std::string(FIGHTER_SIM_ROOT) + "/build/logs/last_flight.txt";
+#if ENABLE_CSV_LOG
     csv_log.open(log_path, std::ios::out | std::ios::trunc);
     if (csv_log.is_open()) {
         csv_log << "t_s,phase,px_m,py_m,pz_m,vx_mps,vy_mps,vz_mps,roll_rad,pitch_rad,yaw_rad,p_rad_s,q_rad_s,r_rad_s,aoa_rad,airspeed_mps,throttle\n";
     } else {
         printf("Warning: could not open %s for writing.\n", log_path.c_str());
+    }
+#endif
+    track_log.open(track_path, std::ios::out | std::ios::trunc);
+    if (track_log.is_open()) {
+        track_log << "t_s,alt_m,px_m,py_m,pz_m,speed_mps,vy_mps,aileron,elevator,rudder,thr_cmd,thr_actual,eng_rpm\n";
+    } else {
+        printf("Warning: could not open %s for writing.\n", track_path.c_str());
     }
 
     // ──  translated comment
@@ -1378,10 +1386,6 @@ int main() {
             gun_timer_s = 0.0;
         }
 
-        if (!script.phases.empty()) {
-            g_throttle_cmd = script.phases[phase_index].throttle;
-        }
-
         //  translated comment
         while (accumulator >= SIM_DT) {
             float sim_dt = SIM_DT * g_game_speed_scale;
@@ -1390,17 +1394,36 @@ int main() {
             if (kUseAutopilot) {
                 ctrl = build_autopilot_controls(g_throttle_cmd);
             } else {
-                ctrl.elevator = glm::clamp(phase.elevator, -1.0f, 1.0f);
-                ctrl.aileron  = glm::clamp(phase.aileron,  -1.0f, 1.0f);
-                ctrl.rudder   = glm::clamp(phase.rudder,   -1.0f, 1.0f);
-                ctrl.throttle = glm::clamp(phase.throttle, 0.0f, 1.0f);
+                if (script.use_pid || phase.has_targets) {
+                    float airspeed = glm::length(state.velocity);
+                    float throttle_bias = 0.45f;
+                    float throttle_out = speed_pid.update(phase.target_speed_mps, airspeed, sim_dt);
+                    ctrl.throttle = glm::clamp(throttle_bias + throttle_out, 0.0f, 1.0f);
+
+                    float climb_out = climb_pid.update(phase.target_climb_mps, state.velocity.y, sim_dt);
+                    ctrl.elevator = glm::clamp(climb_out, -0.6f, 0.6f);
+
+                    glm::vec3 euler = state.euler_angles();
+                    float heading_deg = wrap_angle_deg(glm::degrees(euler.y));
+                    float heading_err = shortest_angle_deg(phase.target_heading_deg, heading_deg);
+                    float rudder_out = heading_pid.update(0.0f, -heading_err, sim_dt);
+                    ctrl.rudder = glm::clamp(rudder_out, -0.6f, 0.6f);
+
+                    ctrl.aileron = 0.0f;
+                } else {
+                    ctrl.elevator = glm::clamp(phase.elevator, -1.0f, 1.0f);
+                    ctrl.aileron  = glm::clamp(phase.aileron,  -1.0f, 1.0f);
+                    ctrl.rudder   = glm::clamp(phase.rudder,   -1.0f, 1.0f);
+                    ctrl.throttle = glm::clamp(phase.throttle, 0.0f, 1.0f);
+                }
             }
+            g_throttle_cmd = ctrl.throttle;
             jsbsim.set_controls(ctrl);
             jsbsim.set_aux_controls(phase.flap, phase.gear);
             jsbsim.step(sim_dt);
             jsbsim.sync_state(state);
             sim_time_s += sim_dt;
-            if (csv_log.is_open()) {
+            if (ENABLE_CSV_LOG && csv_log.is_open()) {
                 glm::vec3 euler = state.euler_angles();
                 glm::vec3 body_vel = glm::mat3_cast(glm::inverse(state.orientation)) * state.velocity;
                 float forward_speed = -body_vel.z;
@@ -1416,15 +1439,42 @@ int main() {
                         << aoa_rad << "," << airspeed << ","
                         << g_throttle_cmd << "\n";
             }
+            if (track_log.is_open()) {
+                if (sim_time_s + 1e-6 >= next_track_log_s) {
+                    float speed = glm::length(state.velocity);
+                    double thr_actual = jsbsim.get_property("controls/engines/engine[0]/throttle");
+                    double eng_rpm_jsb = jsbsim.get_property("propulsion/engine[0]/rpm");
+                    double eng_rpm_fg = jsbsim.get_property("engines/active-engine/rpm");
+                    double eng_rpm = (eng_rpm_jsb > 1.0) ? eng_rpm_jsb : eng_rpm_fg;
+                    track_log.setf(std::ios::fixed);
+                    track_log << std::setprecision(2)
+                              << sim_time_s << ","
+                              << state.position.y << ","
+                              << state.position.x << "," << state.position.y << "," << state.position.z << ","
+                              << speed << ","
+                              << state.velocity.y << ","
+                              << ctrl.aileron << "," << ctrl.elevator << "," << ctrl.rudder << ","
+                              << g_throttle_cmd << "," << thr_actual << "," << eng_rpm << "\n";
+                    next_track_log_s = std::floor(sim_time_s + 1.0);
+                }
+            }
             phase_time_s += sim_dt;
             if (phase_time_s >= phase.duration_s) {
                 phase_time_s = 0.0f;
                 phase_index++;
+                speed_pid.reset();
+                climb_pid.reset();
+                heading_pid.reset();
                 if (phase_index >= (int)script.phases.size()) {
                     phase_index = 0;
                     model_index++;
+#if ENABLE_CSV_LOG
                     if (csv_log.is_open()) {
                         csv_log.close();
+                    }
+#endif
+                    if (track_log.is_open()) {
+                        track_log.close();
                     }
                     if (model_index >= (int)script.models.size()) {
                         glfwSetWindowShouldClose(window, true);
@@ -1435,6 +1485,9 @@ int main() {
                     state.velocity = glm::vec3(0.0f, 0.0f, -script.initial_speed_mps);
                     state.orientation = glm::quat(1, 0, 0, 0);
                     state.angular_vel = glm::vec3(0.0f);
+                    speed_pid.reset();
+                    climb_pid.reset();
+                    heading_pid.reset();
 
                     jsbsim_ready = jsbsim.init(script.models[model_index], state, SIM_DT);
                     if (!jsbsim_ready) {
@@ -1449,12 +1502,22 @@ int main() {
                     sim_time_s = 0.0;
 
                     std::string log_path = std::string(FIGHTER_SIM_ROOT) + "/build/logs/" + script.models[model_index] + ".csv";
+                    std::string track_path = std::string(FIGHTER_SIM_ROOT) + "/build/logs/last_flight.txt";
+#if ENABLE_CSV_LOG
                     csv_log.open(log_path, std::ios::out | std::ios::trunc);
                     if (csv_log.is_open()) {
                         csv_log << "t_s,phase,px_m,py_m,pz_m,vx_mps,vy_mps,vz_mps,roll_rad,pitch_rad,yaw_rad,p_rad_s,q_rad_s,r_rad_s,aoa_rad,airspeed_mps,throttle\n";
                     } else {
                         printf("Warning: could not open %s for writing.\n", log_path.c_str());
                     }
+#endif
+                    track_log.open(track_path, std::ios::out | std::ios::trunc);
+                    if (track_log.is_open()) {
+                        track_log << "t_s,alt_m,px_m,py_m,pz_m,speed_mps,vy_mps,aileron,elevator,rudder,thr_cmd,thr_actual,eng_rpm\n";
+                    } else {
+                        printf("Warning: could not open %s for writing.\n", track_path.c_str());
+                    }
+                    next_track_log_s = 0.0;
                 }
             }
             if (kEnableCombat) {
@@ -1661,9 +1724,15 @@ int main() {
     } else {
         printf("\nBye.\n");
     }
+#if ENABLE_CSV_LOG
     if (csv_log.is_open()) {
         csv_log.close();
         printf("JSBSim logs written to build/logs/*.csv\n");
+    }
+#endif
+    if (track_log.is_open()) {
+        track_log.close();
+        printf("Flight track written to build/logs/last_flight.txt\n");
     }
     glfwDestroyWindow(window);
     glfwTerminate();

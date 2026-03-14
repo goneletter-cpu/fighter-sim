@@ -93,8 +93,17 @@ bool JSBSimAdapter::init(const std::string& model,
     fdm_->SetPropertyValue("propulsion/cutoff_cmd", 0.0);
     fdm_->SetPropertyValue("propulsion/starter_cmd", 1.0);
     fdm_->SetPropertyValue("propulsion/engine[0]/set-running", 1.0);
+    fdm_->SetPropertyValue("controls/switches/master-bat", 1.0);
+    fdm_->SetPropertyValue("controls/switches/master-alt", 1.0);
+    fdm_->SetPropertyValue("controls/circuit-breakers/master", 1.0);
+    fdm_->SetPropertyValue("controls/switches/magnetos", 3.0);
+    fdm_->SetPropertyValue("controls/switches/starter", 1.0);
     fdm_->SetPropertyValue("fcs/mixture-cmd-norm", 1.0);
     fdm_->SetPropertyValue("fcs/mixture-cmd-norm[0]", 1.0);
+    fdm_->SetPropertyValue("controls/engines/current-engine/mixture", 1.0);
+    fdm_->SetPropertyValue("controls/engines/engine[0]/mixture", 1.0);
+    fdm_->SetPropertyValue("controls/engines/current-engine/starter", 1.0);
+    fdm_->SetPropertyValue("controls/engines/engine[0]/starter", 1.0);
     fdm_->SetPropertyValue("fcs/left-brake-cmd-norm", 0.0);
     fdm_->SetPropertyValue("fcs/right-brake-cmd-norm", 0.0);
     fdm_->SetPropertyValue("fcs/parking-brake-cmd-norm", 0.0);
@@ -118,6 +127,12 @@ bool JSBSimAdapter::init(const std::string& model,
     fdm_->SetPropertyValue("fcs/stick-force-per-g", 0.0);
 
     initialized_ = fdm_->RunIC();
+    if (initialized_) {
+        // Release starter after initialization; engine is already set running.
+        fdm_->SetPropertyValue("controls/switches/starter", 0.0);
+        fdm_->SetPropertyValue("controls/engines/current-engine/starter", 0.0);
+        fdm_->SetPropertyValue("controls/engines/engine[0]/starter", 0.0);
+    }
     return initialized_;
 }
 
@@ -133,6 +148,9 @@ void JSBSimAdapter::set_controls(const ControlInput& ctrl) {
     fdm_->SetPropertyValue("fcs/rudder-cmd-norm", rudder);
     fdm_->SetPropertyValue("fcs/throttle-cmd-norm", throttle);
     fdm_->SetPropertyValue("fcs/throttle-cmd-norm[0]", throttle);
+    fdm_->SetPropertyValue("controls/engines/engine[0]/throttle", throttle);
+    fdm_->SetPropertyValue("controls/engines/current-engine/throttle", throttle);
+    fdm_->SetPropertyValue("controls/engines/throttle-all", throttle);
     fdm_->SetPropertyValue("fcs/mixture-cmd-norm", 1.0);
     fdm_->SetPropertyValue("fcs/mixture-cmd-norm[0]", 1.0);
 }
@@ -195,4 +213,9 @@ void JSBSimAdapter::sync_state(AircraftState& state) const {
     state.angular_vel.x = (float)q;
     state.angular_vel.y = (float)r;
     state.angular_vel.z = (float)p;
+}
+
+double JSBSimAdapter::get_property(const std::string& name) const {
+    if (!initialized_) return 0.0;
+    return fdm_->GetPropertyValue(name);
 }

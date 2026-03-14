@@ -1,0 +1,82 @@
+你这个问题很关键，先把结构讲清楚，后续你自己改会更稳。下面是当前目录里每个文件/目录的作用（尽可能详细），路径我都用绝对路径：
+
+根目录概览
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim
+
+构建与说明类
+
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/README.md
+项目说明、玩法简介、构建方式、代码结构概览。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/CMakeLists.txt
+CMake 构建入口。定义编译目标、依赖库等。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/build.sh
+macOS 快速构建脚本（会调用 clang++ 和 Homebrew 安装依赖）。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/.gitignore
+Git 忽略规则。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/.git
+Git 元数据仓库。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/.idea
+JetBrains/CLion 工程配置。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/.vscode
+VS Code 工程配置。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/.DS_Store
+macOS Finder 生成的目录索引文件（可忽略）。
+运行与输出类
+
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/build
+构建输出目录。可执行文件和运行日志都在里面。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/build/logs
+运行日志输出目录。
+last_flight.txt：最近一次飞行轨迹记录
+*.csv：JSBSim 旧日志（已可通过宏关闭）
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/JSBout172B.csv
+看起来是一次运行的 JSBSim 输出 CSV（历史产物，不是源码）。可删除或保留做比对。
+配置类
+
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/config
+运行配置目录。
+flight_script.txt：当前飞行脚本（已改为 JSBSim 属性对齐的文本格式）
+其它 .yaml（如果还有）：现在不会被读取
+头文件（接口/数据结构）
+
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/include/physics.h
+物理状态结构、力学相关类型。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/include/pid.h
+PID 控制器类定义。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/include/flight_controller.h
+飞控相关接口/结构（姿态控制器）。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/include/renderer.h
+渲染器接口，HUD/网格/模型绘制函数声明。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/include/jsbsim_adapter.h
+JSBSim 接口封装（模型加载、状态同步、控制输入）。
+源码实现
+
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/src/main.cpp
+主循环、输入、相机、UI、脚本加载、JSBSim 运行、日志输出。
+你要改脚本格式/飞控逻辑/记录日志，主要都在这里。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/src/physics.cpp
+6DoF 物理模型与 RK4 积分（目前多用于“备用真实物理”路径）。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/src/pid.cpp
+PID 控制器实现。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/src/flight_controller.cpp
+姿态控制器实现（Pitch/Roll/Yaw 控制）。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/src/renderer.cpp
+OpenGL 渲染、HUD、雷达、仪表等绘制逻辑。
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/src/jsbsim_adapter.cpp
+JSBSim 的初始化、控制输入、状态同步、发动机启动属性设置都在这里。
+资源类
+
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/shaders
+OpenGL 着色器源码（线框渲染、HUD、地面网格等）。
+第三方依赖
+
+/Volumes/ThePan/DocumentsOnExternal/workspace/fighter-sim/third_party
+外部依赖与数据集（不要随便改，除非你明确知道原因）。
+jsbsim：JSBSim 引擎
+fgdata / fgaddon：FlightGear 机型/系统/模型数据
+如果你希望我按你关注的方向更细拆，比如：
+
+JSBSim 启动流程与关键属性
+flight_script.txt 的解析逻辑细节
+PID 入口/参数/调参点
+告诉我你要哪一块，我可以进一步逐行解释。

@@ -21,6 +21,7 @@ public:
     void enable_autopilot();
     bool step(float dt);
     void sync_state(AircraftState& state) const;
+    double get_property(const std::string& name) const;
 
 private:
     JSBSim::FGFDMExec* fdm_;
